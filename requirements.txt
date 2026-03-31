@@ -1,0 +1,14 @@
+# ── 必装 ──────────────────────────────────────────────────────────────────────
+chardet                  # 文件编码自动检测
+
+# ── Excel 导出（二选一，推荐同时安装）────────────────────────────────────────
+xlsxwriter               # 写入速度快，constant_memory 模式支持超大文件
+openpyxl                 # 兼容性好，write_only 模式流式写入
+
+# ── 数据库驱动（按需安装）────────────────────────────────────────────────────
+# MySQL
+# mysql-connector-python
+
+# Oracle（1.x 兼容 Instant Client 12.2；2.x 需要 19c+）
+# oracledb<2.0
+# cryptography            # oracledb Thin 模式必须，打包 exe 时也需要

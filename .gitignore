@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Build output
+build/
+dist/
+*.spec.bak
+
+# PyInstaller
+*.manifest
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# User config & state (contains credentials / local paths)
+db_config.json
+ui_state.json
+
+# Logs
+logs/
+*.log
+
+# Oracle Instant Client (not redistributable)
+instantclient*/
+
+# Large data files
+*.db
+*.sqlite
+*.csv
+*.txt
+*.xlsx
+*.xls
+*.peek.txt
+
+# Keep requirements.txt
+!requirements.txt
+
+# IDE & tools
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Internal notes
+zz_*.md
+无效.txt
