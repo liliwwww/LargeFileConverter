@@ -106,16 +106,13 @@ echo [+] ui_state.json   (default language: zh_CN)
 echo [+] data\default.db (empty SQLite database, ready to use)
 echo [+] logs\           (empty, will hold import/export logs)
 
-:: Oracle Instant Client (optional)
-set HAS_OCI=0
-for /d %%i in (instantclient*) do (
-    echo [+] Copying Oracle Instant Client: %%i
-    xcopy /e /i /q "%%i" "%RELEASE_DIR%\%%i" >nul
-    set HAS_OCI=1
-)
-if "!HAS_OCI!"=="0" (
-    echo [  ] No instantclient* folder found. Oracle Thick mode requires it at runtime.
-)
+:: Oracle Instant Client is NOT bundled due to Oracle license restrictions.
+:: Users who need Oracle Thick mode must download it separately from:
+::   https://www.oracle.com/database/technologies/instant-client/downloads.html
+:: and place the instantclient_xx_x\ folder next to LargeFileConverter.exe
+echo [  ] Oracle Instant Client: NOT included (license restriction)
+echo [  ]   Oracle Thin mode works without it.
+echo [  ]   For Thick mode, users must place instantclient_xx_x\ next to the EXE.
 
 :: Create ZIP using PowerShell
 for /f "tokens=1-3 delims=/-" %%a in ("%date%") do (
@@ -144,12 +141,12 @@ echo     db_config.json           pre-configured with default SQLite connection
 echo     ui_state.json            default language: zh_CN
 echo     data\default.db          empty SQLite database (ready to use)
 echo     logs\                    log output directory
-if "!HAS_OCI!"=="1" (
-echo     instantclient\           Oracle Thick mode client
-)
 echo.
-echo   SQLite: works out of the box, no server needed.
-echo   MySQL / Oracle: requires a running database server.
+echo   SQLite : works out of the box, no server needed.
+echo   MySQL  : requires a running MySQL server.
+echo   Oracle : Thin mode works as-is. For Thick mode, users must place
+echo            instantclient_xx_x\ next to LargeFileConverter.exe themselves.
+echo            Download: oracle.com/database/technologies/instant-client
 echo.
 echo   Share the ZIP. Users unzip and double-click LargeFileConverter.exe.
 echo ================================================
