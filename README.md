@@ -141,6 +141,9 @@ build_exe.bat
 
 使用 Oracle Thick 模式时，需将 `instantclient_xx_x\` 目录放在 exe 同目录下，程序启动时自动检测。
 
+> **Oracle 用户注意**：由于 Oracle 许可证限制，Instant Client 未随程序一同分发。如需连接 Oracle 数据库，请自行前往 Oracle 官方网站下载：
+> https://www.oracle.com/database/technologies/instant-client/downloads.html
+
 ---
 
 ## 目录结构
