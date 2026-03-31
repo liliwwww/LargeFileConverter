@@ -7,7 +7,7 @@ __pycache__/
 
 # Build output
 build/
-#dist/
+#dist/gi
 *.spec.bak
 
 # PyInstaller
@@ -61,3 +61,6 @@ desktop.ini
 # Internal notes
 zz_*.md
 无效.txt
+
+# test
+test*

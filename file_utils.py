@@ -18,35 +18,91 @@ split_file.py / count_lines.py 共同调用：
 """
 
 import os
+from i18n import _
 
 _READ_BUF = 8 * 1024 * 1024   # 8 MB
 
 
 # ── 编码检测 ──────────────────────────────────────────────────────────────────
 
-def detect_encoding(path: str) -> str:
+_SAMPLE_HEAD = 8_192   # 头部采样：覆盖表头 + 首行数据
+_SAMPLE_TAIL = 8_192   # 尾部采样：覆盖末行数据
+
+# 字符范围判断
+_CJK_RANGES   = [('\u4e00', '\u9fff'), ('\u3400', '\u4dbf'), ('\uf900', '\ufaff')]
+_HIRA_KATA    = ('\u3040', '\u30ff')   # 平假名 + 片假名
+
+def _ratio(text: str, ranges: list) -> float:
+    """计算 text 中落在 ranges 内的字符占比。"""
+    count = sum(1 for c in text if any(lo <= c <= hi for lo, hi in ranges))
+    return count / max(len(text), 1)
+
+def _read_sample(path: str) -> bytes:
+    """读取文件头部 + 尾部字节，拼合为检测样本。"""
+    size = os.path.getsize(path)
+    with open(path, 'rb') as f:
+        head = f.read(_SAMPLE_HEAD)
+        if size > _SAMPLE_HEAD + _SAMPLE_TAIL:
+            f.seek(-_SAMPLE_TAIL, 2)
+            tail = f.read(_SAMPLE_TAIL)
+        else:
+            tail = b''
+    return head + tail
+
+def detect_encoding_from_bytes(raw: bytes) -> str:
     """
-    自动检测文件编码。
-    优先使用 chardet（需安装），fallback 逐一尝试常见编码。
+    不依赖 chardet，纯规则检测编码。
+    步骤：
+      1. 剔除不可见控制字符（保留 Tab/LF/CR），得到干净样本
+      2. UTF-8 BOM → utf-8-sig
+      3. 能以 GBK 解码且含足量 CJK 汉字 → gbk
+      4. 能以 CP932 解码且含足量假名/汉字 → cp932（日文 Shift-JIS）
+      5. 能以 EUC-JP 解码且含足量假名/汉字 → euc-jp
+      6. 兜底 → utf-8
     """
+    # 1. 剔除不可见控制字符（0x00-0x1F 中只保留 Tab=0x09 LF=0x0A CR=0x0D）
+    # cleaned = bytes(b for b in raw if b >= 0x20 or b in (0x09, 0x0A, 0x0D))
+
+    print(f"yyyyyy{cleaned}")
+
+    # 2. UTF-8 BOM
+    if cleaned[:3] == b'\xef\xbb\xbf':
+        return 'utf-8-sig'
+
+    # 3. 中文：GBK / GB2312
     try:
-        import chardet
-        with open(path, 'rb') as f:
-            raw = f.read(200_000)
-        enc = chardet.detect(raw).get('encoding') or 'utf-8'
-        mapping = {'GB2312': 'gbk', 'ascii': 'utf-8', 'ISO-8859-1': 'latin-1'}
-        return mapping.get(enc, enc)
-    except ImportError:
+        text = cleaned.decode('gbk')
+        #print(f"xxxxxx{_ratio(text, _CJK_RANGES)}")
+        if _ratio(text, _CJK_RANGES) >= 0.005:
+            return 'gbk'
+    except (UnicodeDecodeError, LookupError):
         pass
 
-    for enc in ('utf-8-sig', 'utf-8', 'gbk', 'gb2312', 'latin-1'):
-        try:
-            with open(path, encoding=enc) as f:
-                f.read(50_000)
-            return enc
-        except (UnicodeDecodeError, LookupError):
-            pass
+    # 4. 日文：CP932（Shift-JIS）
+    try:
+        text = cleaned.decode('cp932')
+        if _ratio(text, [_HIRA_KATA] + _CJK_RANGES) >= 0.005:
+            return 'cp932'
+    except (UnicodeDecodeError, LookupError):
+        pass
+
+    # 5. 日文：EUC-JP
+    try:
+        text = cleaned.decode('euc-jp')
+        if _ratio(text, [_HIRA_KATA] + _CJK_RANGES) >= 0.05:
+            return 'euc-jp'
+    except (UnicodeDecodeError, LookupError):
+        pass
+
+    # 6. 兜底
     return 'utf-8'
+
+def detect_encoding(path: str) -> str:
+    """
+    从文件检测编码。
+    采样策略：取文件头部（表头+首行）和尾部（末行）拼合后检测。
+    """
+    return detect_encoding_from_bytes(_read_sample(path))
 
 
 # ── 统计行数 ──────────────────────────────────────────────────────────────────
@@ -178,7 +234,7 @@ def split_file(src: str, out_dir: str, prefix: str, ext: str,
       ValueError       lines_per_file 和 max_bytes 都为 0 或都非 0
     """
     if (lines_per_file == 0) == (max_bytes == 0):
-        raise ValueError("lines_per_file 和 max_bytes 须恰好一个非零")
+        raise ValueError(_("csv.split.err_params"))
 
     file_size  = os.path.getsize(src)
     results    = []
@@ -200,7 +256,7 @@ def split_file(src: str, out_dir: str, prefix: str, ext: str,
         cur_path  = os.path.join(out_dir, f"{prefix}_split_{file_idx:04d}{ext}")
         if os.path.exists(cur_path):
             raise FileExistsError(
-                f"输出文件已存在，拆分终止（不覆盖任何文件）：\n{cur_path}"
+                _("csv.split.file_exists", path=cur_path)
             )
         out_fh = open(cur_path, 'wb')
 

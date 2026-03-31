@@ -73,14 +73,11 @@ def _init_oracle_client(lib_dir: str = "") -> None:
     resolved = _resolve_lib_dir(lib_dir) or _auto_detect_oracle_client()
     if not resolved:
         raise FileNotFoundError(
-            "未找到 Oracle Instant Client 目录。\n"
-            f"请在连接配置中填写绝对路径，或将 instantclient 文件夹放到程序同目录下。\n"
-            f"当前程序目录: {APP_DIR}"
+            _("oracle.err.no_client", app_dir=APP_DIR)
         )
     if not os.path.isdir(resolved):
         raise FileNotFoundError(
-            f"Oracle Instant Client 路径不存在: {resolved}\n"
-            f"当前程序目录: {APP_DIR}"
+            _("oracle.err.bad_dir", resolved=resolved, app_dir=APP_DIR)
         )
     # Python 3.8+ / PyInstaller exe 必须显式注册 DLL 搜索目录
     # 否则 Windows 找不到 oci.dll，导致 DPI-1072
@@ -91,8 +88,8 @@ def _init_oracle_client(lib_dir: str = "") -> None:
     os.environ["PATH"] = resolved + os.pathsep + os.environ.get("PATH", "")
 
     oracledb.init_oracle_client(lib_dir=resolved)
-    print(f"[Oracle] Thick 模式，Instant Client: {resolved}", flush=True)
-    print(f"[Oracle] oracledb 版本: {oracledb.__version__}", flush=True)
+    print(f"[Oracle] Thick mode, Instant Client: {resolved}", flush=True)
+    print(f"[Oracle] oracledb version: {oracledb.__version__}", flush=True)
     _oracle_thick_initialized = True
 
 try:
@@ -145,6 +142,7 @@ set_lang(_saved_lang)
 
 from file_utils import (
     detect_encoding,
+    detect_encoding_from_bytes,
     count_lines      as _fu_count_lines,
     read_head        as _fu_read_head,
     read_tail        as _fu_read_tail,
@@ -271,7 +269,7 @@ class DBConnection:
             import sqlite3
             path = self.cfg.get("path", "")
             if not path:
-                raise ValueError("SQLite 数据库文件路径不能为空")
+                raise ValueError(_("db.err.sqlite_no_path"))
             # 相对路径 → 相对于程序所在目录（双击 EXE 时工作目录不确定）
             if not os.path.isabs(path):
                 path = os.path.join(APP_DIR, path)
@@ -279,7 +277,7 @@ class DBConnection:
             self.conn = sqlite3.connect(path)
         elif t == "mysql":
             if not HAS_MYSQL:
-                raise ImportError("请先安装: pip install mysql-connector-python")
+                raise ImportError(_("db.err.no_mysql"))
             self.conn = mysql.connector.connect(
                 host=self.cfg.get("host", "localhost"),
                 port=int(self.cfg.get("port", 3306)),
@@ -291,7 +289,7 @@ class DBConnection:
             )
         elif t == "oracle":
             if not HAS_ORACLE:
-                raise ImportError("请先安装: pip install oracledb")
+                raise ImportError(_("db.err.no_oracle"))
             lib_dir = self.cfg.get("lib_dir", "") or ""
             _init_oracle_client(lib_dir)
             dsn = oracledb.makedsn(
@@ -305,7 +303,7 @@ class DBConnection:
                 dsn=dsn,
             )
         else:
-            raise ValueError(f"不支持的数据库类型: {t}")
+            raise ValueError(_("db.err.unsupported", t=t))
         return self
 
     def close(self):
@@ -333,29 +331,19 @@ class DBConnection:
             return f'"{name.upper()}"'
         return f'"{name}"'
 
-    @staticmethod
-    def _bind_name(col: str, idx: int) -> str:
-        """返回 Oracle 命名占位符的合法绑定变量名（仅保留字母数字和下划线）。"""
-        import re as _re
-        name = _re.sub(r'[^A-Za-z0-9_]', '_', col)
-        if not name or name[0].isdigit():
-            name = f"col_{name}"
-        # 截断到 30 字符（Oracle 标识符上限），加序号防重名
-        return f"{name[:25]}_{idx}"
-
     def placeholders(self, columns: list) -> str:
         """返回 INSERT 的占位符字符串。"""
         if self.db_type == "mysql":
             return ", ".join(["%s"] * len(columns))
         elif self.db_type == "oracle":
-            return ", ".join([f":{self._bind_name(c, i)}" for i, c in enumerate(columns)])
+            # Oracle 位置绑定变量 :1, :2, ... 避免列名含中文等非 ASCII 字符时命名冲突
+            return ", ".join([f":{i + 1}" for i in range(len(columns))])
         return ", ".join(["?"] * len(columns))
 
     def make_row(self, values: list, columns: list):
-        """Oracle 用 dict（键为合法绑定变量名），其余用 tuple。"""
+        """返回一行数据：Oracle 空字符串转 None，其余数据库保持 tuple。"""
         if self.db_type == "oracle":
-            return {self._bind_name(c, i): (v if v != "" else None)
-                    for i, (c, v) in enumerate(zip(columns, values))}
+            return tuple(None if v == "" else v for v in values)
         return tuple(values)
 
     # ── 元数据查询 ────────────────────────────────────────────────────────────
@@ -731,7 +719,7 @@ class _PreviewGrid(tk.Frame):
 class CSVImporterApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("CSV 数据导入工具  v1.0")
+        self.title(_("app.title"))
         self.geometry("960x700")
         self.minsize(800, 600)
 
@@ -784,22 +772,22 @@ class CSVImporterApp(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
     def _build_db_tab(self):
         f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  数据库连接  ")
+        self.nb.add(f, text=_("tab.db"))
 
         # 已保存连接
-        saved = ttk.LabelFrame(f, text="已保存的连接")
+        saved = ttk.LabelFrame(f, text=_("db.saved.label"))
         saved.pack(fill=tk.X, padx=12, pady=(12, 4))
         self.saved_name_var = tk.StringVar()
         self.saved_combo = ttk.Combobox(saved, textvariable=self.saved_name_var, width=30, state="readonly")
         self.saved_combo.pack(side=tk.LEFT, padx=6, pady=6)
-        ttk.Button(saved, text="加载", command=self._load_db_config).pack(side=tk.LEFT, padx=3)
-        ttk.Button(saved, text="删除", command=self._delete_db_config).pack(side=tk.LEFT, padx=3)
+        ttk.Button(saved, text=_("db.btn.load"), command=self._load_db_config).pack(side=tk.LEFT, padx=3)
+        ttk.Button(saved, text=_("db.btn.delete"), command=self._delete_db_config).pack(side=tk.LEFT, padx=3)
 
         # 连接字段
-        fields_frame = ttk.LabelFrame(f, text="连接配置")
+        fields_frame = ttk.LabelFrame(f, text=_("db.fields.label"))
         fields_frame.pack(fill=tk.X, padx=12, pady=4)
 
-        ttk.Label(fields_frame, text="数据库类型:").grid(row=0, column=0, sticky=tk.W, padx=8, pady=5)
+        ttk.Label(fields_frame, text=_("db.type.label")).grid(row=0, column=0, sticky=tk.W, padx=8, pady=5)
         self.db_type_var = tk.StringVar(value="sqlite")
         db_type_cb = ttk.Combobox(fields_frame, textvariable=self.db_type_var,
                                    values=["sqlite", "mysql", "oracle"], width=10, state="readonly")
@@ -818,21 +806,21 @@ class CSVImporterApp(tk.Tk):
             self._db_entries[key] = e
             return e
 
-        self._db_entries["conn_name_lbl"] = ttk.Label(fields_frame, text="连接名称:")
+        self._db_entries["conn_name_lbl"] = ttk.Label(fields_frame, text=_("db.conn_name.label"))
         self._db_entries["conn_name_lbl"].grid(row=1, column=0, sticky=tk.W, padx=8, pady=4)
         self._db_vars["conn_name"] = tk.StringVar(value="")
         e_name = ttk.Entry(fields_frame, textvariable=self._db_vars["conn_name"], width=38)
         e_name.grid(row=1, column=1, sticky=tk.W, padx=6, pady=4)
         self._db_entries["conn_name"] = e_name
 
-        add_row(2, "主机 / 文件路径:", "host", "localhost")
-        ttk.Button(fields_frame, text="浏览...", command=self._browse_sqlite_file).grid(
+        add_row(2, _("db.host.label"), "host", "localhost")
+        ttk.Button(fields_frame, text=_("common.btn.browse"), command=self._browse_sqlite_file).grid(
             row=2, column=2, padx=4)
 
-        add_row(3, "端口:", "port", "3306")
-        add_row(4, "用户名:", "user", "")
-        add_row(5, "密码:", "password", "", show="*")
-        add_row(6, "数据库 / 服务名:", "database", "")
+        add_row(3, _("db.port.label"), "port", "3306")
+        add_row(4, _("db.user.label"), "user", "")
+        add_row(5, _("db.password.label"), "password", "", show="*")
+        add_row(6, _("db.database.label"), "database", "")
 
         # Oracle Instant Client 路径（仅 Oracle Thick 模式需要）
         # 自动检测项目目录下的 instantclient_* 文件夹作为默认值
@@ -840,28 +828,28 @@ class CSVImporterApp(tk.Tk):
         self._db_vars["lib_dir"] = tk.StringVar(value=_detected)
         self._oracle_row = ttk.Frame(fields_frame)
         self._oracle_row.grid(row=7, column=0, columnspan=3, sticky=tk.EW, padx=4, pady=2)
-        ttk.Label(self._oracle_row, text="Instant Client 路径:").pack(side=tk.LEFT, padx=4)
+        ttk.Label(self._oracle_row, text=_("db.lib_dir.label")).pack(side=tk.LEFT, padx=4)
         ttk.Entry(self._oracle_row, textvariable=self._db_vars["lib_dir"], width=30).pack(
             side=tk.LEFT, padx=4)
-        ttk.Button(self._oracle_row, text="浏览...",
+        ttk.Button(self._oracle_row, text=_("common.btn.browse"),
                    command=lambda: self._db_vars["lib_dir"].set(
-                       filedialog.askdirectory(title="选择 Oracle Instant Client 目录") or
+                       filedialog.askdirectory(title=_("db.browse.oracle.title")) or
                        self._db_vars["lib_dir"].get()
                    )).pack(side=tk.LEFT, padx=2)
         ttk.Label(self._oracle_row,
-                  text="（留空 = Thin 模式，无需 Oracle Client）",
+                  text=_("db.lib_dir.hint"),
                   foreground="gray").pack(side=tk.LEFT, padx=6)
 
         self._sqlite_hint = ttk.Label(fields_frame,
-                                       text="SQLite 模式：主机/文件路径填写 .db 文件的完整路径",
+                                       text=_("db.sqlite.hint"),
                                        foreground="gray")
         self._sqlite_hint.grid(row=8, column=0, columnspan=3, sticky=tk.W, padx=8, pady=2)
 
         # 操作按钮
         btn_row = ttk.Frame(f)
         btn_row.pack(fill=tk.X, padx=12, pady=8)
-        ttk.Button(btn_row, text="保存配置", command=self._save_db_config).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_row, text="测试连接", command=self._test_connection).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text=_("db.btn.save"), command=self._save_db_config).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text=_("db.btn.test"), command=self._test_connection).pack(side=tk.LEFT, padx=4)
         self.conn_status_var = tk.StringVar(value="")
         ttk.Label(btn_row, textvariable=self.conn_status_var).pack(side=tk.LEFT, padx=10)
 
@@ -889,7 +877,7 @@ class CSVImporterApp(tk.Tk):
 
     def _browse_sqlite_file(self):
         path = filedialog.asksaveasfilename(
-            title="选择或新建 SQLite 数据库文件",
+            title=_("db.browse.sqlite.title"),
             filetypes=[("SQLite", "*.db *.sqlite"), ("All", "*.*")],
             defaultextension=".db",
         )
@@ -931,12 +919,12 @@ class CSVImporterApp(tk.Tk):
         cfg = self._get_ui_db_cfg()
         name = cfg.get("name", "")
         if not name:
-            messagebox.showwarning("提示", "请填写连接名称")
+            messagebox.showwarning(_("common.title.hint"), _("db.save.no_name"))
             return
         self.cfg_mgr.save(name, cfg)
         self._refresh_saved_combo()
         self.saved_name_var.set(name)
-        messagebox.showinfo("已保存", f"连接配置 [{name}] 已保存")
+        messagebox.showinfo(_("db.save.done.title"), _("db.save.done", name=name))
 
     def _load_db_config(self):
         name = self.saved_name_var.get()
@@ -948,7 +936,7 @@ class CSVImporterApp(tk.Tk):
         name = self.saved_name_var.get()
         if not name:
             return
-        if messagebox.askyesno("确认删除", f"删除连接配置 [{name}]？"):
+        if messagebox.askyesno(_("db.delete.title"), _("db.delete.confirm", name=name)):
             self.cfg_mgr.delete(name)
             self._refresh_saved_combo()
 
@@ -966,69 +954,69 @@ class CSVImporterApp(tk.Tk):
 
     def _test_connection(self):
         cfg = self._get_ui_db_cfg()
-        self.conn_status_var.set("连接中...")
+        self.conn_status_var.set(_("db.test.connecting"))
         self.update_idletasks()
         try:
             db = DBConnection(cfg)
             db.connect()
             db.close()
-            self.conn_status_var.set("✓ 连接成功")
-            messagebox.showinfo("连接测试", "数据库连接成功！")
+            self.conn_status_var.set(_("db.test.ok"))
+            messagebox.showinfo(_("db.test.ok.title"), _("db.test.ok.msg"))
         except Exception as e:
-            self.conn_status_var.set("✗ 连接失败")
-            messagebox.showerror("连接失败", str(e))
+            self.conn_status_var.set(_("db.test.fail"))
+            messagebox.showerror(_("db.test.fail.title"), str(e))
 
     # ══════════════════════════════════════════════════════════════════════════
     # Tab 2 — CSV 文件配置
     # ══════════════════════════════════════════════════════════════════════════
     def _build_csv_tab(self):
         outer = ttk.Frame(self.nb)
-        self.nb.add(outer, text="  CSV 文件配置  ")
+        self.nb.add(outer, text=_("tab.csv"))
 
         sub = ttk.Notebook(outer)
         sub.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
         f1 = ttk.Frame(sub)
-        sub.add(f1, text="  文件配置  ")
+        sub.add(f1, text=_("tab.csv_file"))
         self._build_csv_file_config(f1)
 
         f2 = ttk.Frame(sub)
-        sub.add(f2, text="  字符与分隔符探测  ")
+        sub.add(f2, text=_("tab.csv_tools"))
         self._build_csv_char_tools(f2)
 
 
     def _build_csv_file_config(self, f):
         """Sub-tab: file selection + parse config + file info (original content)."""
         # 文件选择
-        file_lf = ttk.LabelFrame(f, text="文件选择")
+        file_lf = ttk.LabelFrame(f, text=_("csv.file_select.label"))
         file_lf.pack(fill=tk.X, padx=12, pady=(12, 4))
         _ui = _load_ui_state()
         self.csv_path_var = tk.StringVar(value=_ui.get("last_csv_path", ""))
         ttk.Entry(file_lf, textvariable=self.csv_path_var, width=68).pack(side=tk.LEFT, padx=6, pady=8)
-        ttk.Button(file_lf, text="浏览...", command=self._browse_csv).pack(side=tk.LEFT, padx=4)
+        ttk.Button(file_lf, text=_("common.btn.browse"), command=self._browse_csv).pack(side=tk.LEFT, padx=4)
 
         # 解析配置（含标题行、忽略行、编码；确认后统一生效）
         # 变量初始化（列分隔符/引用字符 Widget 在数据预览 tab 中创建）
         self.delimiter_var = tk.StringVar(value="|")
         self.quotechar_var = tk.StringVar(value='"')
 
-        opt_lf = ttk.LabelFrame(f, text="解析配置（确认后生效于校验/预览/导入/导出）")
+        opt_lf = ttk.LabelFrame(f, text=_("csv.opt.label"))
         opt_lf.pack(fill=tk.X, padx=12, pady=4)
 
         # 编码行
         enc_row = ttk.Frame(opt_lf)
         enc_row.pack(fill=tk.X, padx=8, pady=(8, 2))
-        ttk.Label(enc_row, text="检测到编码:").pack(side=tk.LEFT)
-        ttk.Label(enc_row, textvariable=self.csv_encoding_var,
+        ttk.Label(enc_row, text=_("csv.encoding.label")).pack(side=tk.LEFT)
+        ttk.Entry(enc_row, textvariable=self.csv_encoding_var,
                   foreground="blue", width=20).pack(side=tk.LEFT, padx=4)
 
         # 标题行行
         hdr_row = ttk.Frame(opt_lf)
         hdr_row.pack(fill=tk.X, padx=8, pady=2)
-        ttk.Checkbutton(hdr_row, text="文本包含标题行",
+        ttk.Checkbutton(hdr_row, text=_("csv.header.check"),
                         variable=self.has_header_var,
                         command=self._on_header_toggle).pack(side=tk.LEFT)
-        ttk.Label(hdr_row, text="标题行行号:").pack(side=tk.LEFT, padx=(16, 2))
+        ttk.Label(hdr_row, text=_("csv.header.row_label")).pack(side=tk.LEFT, padx=(16, 2))
         self.header_row_entry = ttk.Entry(hdr_row, textvariable=self.header_row_var, width=5)
         self.header_row_entry.pack(side=tk.LEFT)
         self.header_row_entry.configure(state=tk.DISABLED)
@@ -1036,47 +1024,47 @@ class CSVImporterApp(tk.Tk):
         # 忽略前/后行
         skip_row1 = ttk.Frame(opt_lf)
         skip_row1.pack(fill=tk.X, padx=8, pady=2)
-        ttk.Label(skip_row1, text="忽略前").pack(side=tk.LEFT)
+        ttk.Label(skip_row1, text=_("csv.skip_head.label")).pack(side=tk.LEFT)
         self.skip_head_var = tk.StringVar(value="0")
         ttk.Entry(skip_row1, textvariable=self.skip_head_var, width=5).pack(side=tk.LEFT, padx=2)
-        ttk.Label(skip_row1, text="行   忽略后").pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(skip_row1, text=_("csv.skip_head.unit") + "   " + _("csv.skip_tail.label")).pack(side=tk.LEFT, padx=(4, 0))
         self.skip_tail_var = tk.StringVar(value="0")
         ttk.Entry(skip_row1, textvariable=self.skip_tail_var, width=5).pack(side=tk.LEFT, padx=2)
-        ttk.Label(skip_row1, text="行").pack(side=tk.LEFT)
+        ttk.Label(skip_row1, text=_("csv.skip_tail.unit")).pack(side=tk.LEFT)
 
         # 忽略中间行
         skip_row2 = ttk.Frame(opt_lf)
         skip_row2.pack(fill=tk.X, padx=8, pady=2)
-        ttk.Label(skip_row2, text="忽略中间行:").pack(side=tk.LEFT)
+        ttk.Label(skip_row2, text=_("csv.skip_middle.label")).pack(side=tk.LEFT)
         self.skip_middle_var = tk.StringVar(value="")
         ttk.Entry(skip_row2, textvariable=self.skip_middle_var, width=40).pack(
             side=tk.LEFT, padx=4)
-        ttk.Label(skip_row2, text="格式: 1,10-20,54", foreground="gray").pack(side=tk.LEFT)
+        ttk.Label(skip_row2, text=_("csv.skip_middle.hint"), foreground="gray").pack(side=tk.LEFT)
 
         # 确认行
         confirm_row = ttk.Frame(opt_lf)
         confirm_row.pack(fill=tk.X, padx=8, pady=(6, 8))
-        ttk.Button(confirm_row, text="确认", command=self._confirm_skip).pack(side=tk.LEFT)
-        self.skip_status_var = tk.StringVar(value="尚未确认")
+        ttk.Button(confirm_row, text=_("csv.confirm.btn"), command=self._confirm_skip).pack(side=tk.LEFT)
+        self.skip_status_var = tk.StringVar(value=_("csv.confirm.pending"))
         ttk.Label(confirm_row, textvariable=self.skip_status_var,
                   foreground="blue").pack(side=tk.LEFT, padx=8)
 
         # 文件信息预览
-        info_lf = ttk.LabelFrame(f, text="文件信息")
+        info_lf = ttk.LabelFrame(f, text=_("csv.info.label"))
         info_lf.pack(fill=tk.X, padx=12, pady=4)
-        self.file_info_var = tk.StringVar(value="尚未选择文件")
+        self.file_info_var = tk.StringVar(value=_("csv.info.no_file"))
         ttk.Label(info_lf, textvariable=self.file_info_var, foreground="gray").pack(
             anchor=tk.W, padx=8, pady=6)
 
         # 文件工具区
-        tool_lf = ttk.LabelFrame(f, text="文件工具")
+        tool_lf = ttk.LabelFrame(f, text=_("csv.tools.label"))
         tool_lf.pack(fill=tk.X, padx=12, pady=4)
 
         # 工具1：统计行数
         row_cnt = ttk.Frame(tool_lf)
         row_cnt.pack(fill=tk.X, padx=8, pady=(8, 2))
-        ttk.Label(row_cnt, text="统计行数:").pack(side=tk.LEFT)
-        ttk.Button(row_cnt, text="开始统计", command=self._ft_count_lines).pack(side=tk.LEFT, padx=6)
+        ttk.Label(row_cnt, text=_("csv.tools.count.label")).pack(side=tk.LEFT)
+        ttk.Button(row_cnt, text=_("csv.tools.count.btn"), command=self._ft_count_lines).pack(side=tk.LEFT, padx=6)
         self._ft_count_status = tk.StringVar(value="")
         ttk.Label(row_cnt, textvariable=self._ft_count_status, foreground="blue").pack(side=tk.LEFT, padx=4)
 
@@ -1085,35 +1073,35 @@ class CSVImporterApp(tk.Tk):
         # 工具2：Peek 预览
         row_peek = ttk.Frame(tool_lf)
         row_peek.pack(fill=tk.X, padx=8, pady=2)
-        ttk.Label(row_peek, text="文件预览:").pack(side=tk.LEFT)
-        ttk.Label(row_peek, text="行数").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Label(row_peek, text=_("csv.tools.peek.label")).pack(side=tk.LEFT)
+        ttk.Label(row_peek, text=_("csv.tools.peek.n_label")).pack(side=tk.LEFT, padx=(8, 2))
         self._ft_peek_n_var = tk.StringVar(value="100")
         ttk.Entry(row_peek, textvariable=self._ft_peek_n_var, width=6).pack(side=tk.LEFT)
-        ttk.Button(row_peek, text="预览头尾", command=self._ft_peek).pack(side=tk.LEFT, padx=6)
+        ttk.Button(row_peek, text=_("csv.tools.peek.btn"), command=self._ft_peek).pack(side=tk.LEFT, padx=6)
 
         ttk.Separator(tool_lf, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=8, pady=4)
 
         # 工具3：文件拆分
         row_sp1 = ttk.Frame(tool_lf)
         row_sp1.pack(fill=tk.X, padx=8, pady=2)
-        ttk.Label(row_sp1, text="文件拆分:").pack(side=tk.LEFT)
+        ttk.Label(row_sp1, text=_("csv.tools.split.label")).pack(side=tk.LEFT)
         self._ft_split_mode = tk.StringVar(value="lines")
-        ttk.Radiobutton(row_sp1, text="按行数", variable=self._ft_split_mode,
+        ttk.Radiobutton(row_sp1, text=_("csv.tools.split.lines"), variable=self._ft_split_mode,
                         value="lines").pack(side=tk.LEFT, padx=(8, 2))
-        ttk.Radiobutton(row_sp1, text="按大小(MB)", variable=self._ft_split_mode,
+        ttk.Radiobutton(row_sp1, text=_("csv.tools.split.size"), variable=self._ft_split_mode,
                         value="size").pack(side=tk.LEFT, padx=2)
         self._ft_split_val_var = tk.StringVar(value="1000000")
         ttk.Entry(row_sp1, textvariable=self._ft_split_val_var, width=10).pack(side=tk.LEFT, padx=4)
-        ttk.Label(row_sp1, text="行 / MB", foreground="gray").pack(side=tk.LEFT)
-        ttk.Button(row_sp1, text="开始拆分", command=self._ft_split).pack(side=tk.LEFT, padx=10)
+        ttk.Label(row_sp1, text=_("csv.tools.split.unit"), foreground="gray").pack(side=tk.LEFT)
+        ttk.Button(row_sp1, text=_("csv.tools.split.btn"), command=self._ft_split).pack(side=tk.LEFT, padx=10)
         self._ft_split_status = tk.StringVar(value="")
         ttk.Label(row_sp1, textvariable=self._ft_split_status, foreground="blue").pack(side=tk.LEFT, padx=4)
         ttk.Frame(tool_lf).pack(pady=2)  # bottom padding
 
     def _browse_csv(self):
         path = filedialog.askopenfilename(
-            title="选择 CSV 文件",
-            filetypes=[("CSV / 文本", "*.csv *.txt"), ("All", "*.*")],
+            title=_("csv.browse.title"),
+            filetypes=[(_("csv.browse.filetype"), "*.csv *.txt"), ("All", "*.*")],
         )
         if path:
             self.csv_path_var.set(path)
@@ -1121,13 +1109,13 @@ class CSVImporterApp(tk.Tk):
             self._redetect_encoding()
             size = os.path.getsize(path)
             self.file_info_var.set(
-                f"路径: {path}  |  大小: {size:,} 字节 ({size / 1024 / 1024:.1f} MB)"
+                _("csv.info.path_size", path=path, size=size, mb=size / 1024 / 1024)
             )
 
     def _redetect_encoding(self):
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先选择 CSV 文件")
+            messagebox.showwarning(_("common.title.hint"), _("csv.browse.no_file"))
             return
         enc = detect_encoding(path)
         self.csv_encoding_var.set(enc)
@@ -1140,7 +1128,7 @@ class CSVImporterApp(tk.Tk):
     def _confirm_skip(self):
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先选择文件")
+            messagebox.showwarning(_("common.title.hint"), _("csv.confirm.no_file"))
             return
 
         # 1. 验证标题行行号
@@ -1149,7 +1137,7 @@ class CSVImporterApp(tk.Tk):
         if has_header:
             hr_str = self.header_row_var.get().strip()
             if not hr_str or not hr_str.isdigit() or int(hr_str) < 1:
-                messagebox.showwarning("提示", '已勾选"文本包含标题行"，请填写标题行的行号（正整数）')
+                messagebox.showwarning(_("common.title.hint"), _("csv.confirm.header_hint"))
                 return
             header_row = int(hr_str)
 
@@ -1158,17 +1146,17 @@ class CSVImporterApp(tk.Tk):
             h = max(0, int(self.skip_head_var.get() or 0))
             t = max(0, int(self.skip_tail_var.get() or 0))
         except ValueError:
-            messagebox.showwarning("提示", "忽略前/后行数必须为非负整数")
+            messagebox.showwarning(_("common.title.hint"), _("csv.confirm.skip_int"))
             return
         middle_text = self.skip_middle_var.get().strip()
         try:
             middle_set = parse_ignore_ranges(middle_text) if middle_text else set()
         except Exception:
-            messagebox.showwarning("提示", "忽略中间行格式错误，示例: 1,10-20,54")
+            messagebox.showwarning(_("common.title.hint"), _("csv.confirm.skip_fmt"))
             return
 
-        # 3. 检测编码
-        enc = detect_encoding(path)
+        # 3. 编码：优先使用用户手动填写的值，为空才自动检测
+        enc = self.csv_encoding_var.get().strip() or detect_encoding(path)
         self.csv_encoding_var.set(enc)
 
         # 4. 应用设置
@@ -1178,13 +1166,13 @@ class CSVImporterApp(tk.Tk):
 
         parts = []
         if h > 0:
-            parts.append(f"前 {h} 行")
+            parts.append(_("csv.confirm.skip_head", n=h))
         if t > 0:
-            parts.append(f"后 {t} 行")
+            parts.append(_("csv.confirm.skip_tail", n=t))
         if middle_set:
-            parts.append(f"中间 {len(middle_set)} 行")
-        skip_desc = "忽略" + "、".join(parts) if parts else "无忽略行"
-        self.skip_status_var.set(f"已确认  编码:{enc}  {skip_desc}")
+            parts.append(_("csv.confirm.skip_mid", n=len(middle_set)))
+        skip_desc = "、".join(parts) if parts else _("csv.confirm.no_skip")
+        self.skip_status_var.set(_("csv.confirm.done", enc=enc, skip_desc=skip_desc))
 
         # 5. 后台读取边界行（支持 20 GB 大文件）
         def _read_boundary():
@@ -1238,22 +1226,68 @@ class CSVImporterApp(tk.Tk):
                     last_data = rev_line[:200]
                     break
 
+                # ── 逐行原始字节编码检测，打印到控制台 ────────────────────────
+                def _raw_line_at(fpath, idx_0based):
+                    with open(fpath, 'rb') as fh:
+                        for i, line in enumerate(fh):
+                            if i == idx_0based:
+                                return line.rstrip(b'\r\n')
+                    return None
+
+                enc_samples = []
+                if has_header and header_row > 0:
+                    raw = _raw_line_at(path, header_row - 1)
+                    if raw:
+                        enc_samples.append(("表头", header_row, raw))
+
+                if first_data_lineno is not None:
+                    raw = _raw_line_at(path, first_data_lineno - 1)
+                    if raw:
+                        enc_samples.append(("首行数据", first_data_lineno, raw))
+
+                # 末行：从已读入的 buf 中提取原始字节（与 last_data 对应）
+                buf_lines_b = buf.split(b'\n')
+                while buf_lines_b and not buf_lines_b[-1].strip():
+                    buf_lines_b.pop()
+                skipped2 = 0
+                for rev_raw in reversed(buf_lines_b):
+                    rev_raw = rev_raw.rstrip(b'\r')
+                    approx_ln = total_approx - skipped2
+                    if t > 0 and approx_ln > total_approx - t:
+                        skipped2 += 1
+                        continue
+                    if approx_ln in middle_set:
+                        skipped2 += 1
+                        continue
+                    if rev_raw.strip():
+                        enc_samples.append(("末行数据", approx_ln, rev_raw))
+                    break
+
+                print("─" * 60)
+                print("[编码检测] 逐行采样：")
+                for label, lineno, raw in enc_samples:
+                    detected = detect_encoding_from_bytes(raw)
+                    print(f"  {label}（第 {lineno} 行）: {detected:<12}  {raw[:80]}")
+                print("─" * 60)
+                # ─────────────────────────────────────────────────────────────
+
                 def _show(hc=header_content, fd=first_data, fln=first_data_lineno, ld=last_data):
-                    msg = f"解析配置已确认\n\n文件编码: {enc}\n"
+                    msg = _("csv.confirm.dialog.ok", enc=enc)
                     if hc is not None:
-                        msg += f"\n标题行（第 {header_row} 行）:\n  {hc}\n"
+                        msg += _("csv.confirm.dialog.header", row=header_row, content=hc)
                     if fln is not None:
-                        fd_display = fd if fd else "（空行）"
-                        msg += f"\n第一条数据（第 {fln} 行）:\n  {fd_display}\n"
+                        fd_display = fd if fd else _("csv.confirm.dialog.empty_line")
+                        msg += _("csv.confirm.dialog.first_data", lineno=fln, content=fd_display)
                     else:
-                        msg += f"\n第一条数据:\n  （文件行数不足或全被忽略）\n"
-                    msg += f"\n最后一条数据:\n  {ld if ld is not None else '（文件行数不足或全被忽略）'}"
-                    messagebox.showinfo("解析配置确认", msg)
+                        msg += _("csv.confirm.dialog.no_first")
+                    last_content = ld if ld is not None else _("csv.confirm.dialog.no_data")
+                    msg += _("csv.confirm.dialog.last_data", content=last_content)
+                    messagebox.showinfo(_("csv.confirm.dialog.title"), msg)
                 self.after(0, _show)
             except Exception:
                 import traceback
                 err = traceback.format_exc()
-                self.after(0, lambda: messagebox.showerror("读取失败", err))
+                self.after(0, lambda: messagebox.showerror(_("csv.confirm.read_fail"), err))
 
         threading.Thread(target=_read_boundary, daemon=True).start()
 
@@ -1271,7 +1305,7 @@ class CSVImporterApp(tk.Tk):
     def _ft_get_path(self) -> str:
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先选择文件")
+            messagebox.showwarning(_("common.title.hint"), _("csv.confirm.no_file"))
             return ""
         return path
 
@@ -1280,18 +1314,18 @@ class CSVImporterApp(tk.Tk):
         path = self._ft_get_path()
         if not path:
             return
-        self._ft_count_status.set("统计中...")
+        self._ft_count_status.set(_("csv.count.counting"))
         def _run():
             try:
                 count = _fu_count_lines(path)
                 self.after(0, lambda c=count: (
-                    self._ft_count_status.set(f"共 {c:,} 行"),
-                    messagebox.showinfo("统计行数", f"文件：{path}\n\n共 {c:,} 行"),
+                    self._ft_count_status.set(_("csv.count.result", n=c)),
+                    messagebox.showinfo(_("csv.count.title"), _("csv.count.msg", path=path, n=c)),
                 ))
             except Exception as e:
                 self.after(0, lambda err=str(e): (
-                    self._ft_count_status.set("统计失败"),
-                    messagebox.showerror("错误", err),
+                    self._ft_count_status.set(_("csv.count.fail")),
+                    messagebox.showerror(_("common.title.error"), err),
                 ))
         threading.Thread(target=_run, daemon=True).start()
 
@@ -1303,7 +1337,7 @@ class CSVImporterApp(tk.Tk):
         try:
             n = max(1, int(self._ft_peek_n_var.get() or 100))
         except ValueError:
-            messagebox.showwarning("提示", "行数须为正整数")
+            messagebox.showwarning(_("common.title.hint"), _("csv.peek.invalid_n"))
             return
 
         def _run():
@@ -1315,28 +1349,28 @@ class CSVImporterApp(tk.Tk):
 
                 out_path = path + '.peek.txt'
                 with open(out_path, 'w', encoding='utf-8') as fh:
-                    fh.write(f"文件: {path}\n大小: {file_size:,} 字节  编码: {enc}\n\n")
-                    fh.write(f"{'─'*40}\n前 {n} 行\n{'─'*40}\n")
+                    fh.write(_("csv.peek.file_info", path=path, size=file_size, enc=enc))
+                    fh.write(f"{'─'*40}\n" + _("csv.peek.head_label", n=n) + f"\n{'─'*40}\n")
                     for i, ln in enumerate(head_lines, 1):
                         fh.write(f"{i:>6}: {ln}\n")
-                    fh.write(f"\n{'─'*40}\n后 {n} 行\n{'─'*40}\n")
+                    fh.write(f"\n{'─'*40}\n" + _("csv.peek.tail_label", n=n) + f"\n{'─'*40}\n")
                     for i, ln in enumerate(tail_lines, 1):
                         fh.write(f"{i:>6}: {ln}\n")
 
                 def _show(hl=head_lines, tl=tail_lines, op=out_path):
                     top = tk.Toplevel(self)
-                    top.title(f"文件预览 — 前/后各 {n} 行")
+                    top.title(_("csv.peek.title", n=n))
                     top.geometry("900x600")
                     st = scrolledtext.ScrolledText(top, font=("Consolas", 9), wrap=tk.NONE)
                     st.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-                    st.insert(tk.END, f"文件: {path}\n大小: {file_size:,} 字节  编码: {enc}\n")
-                    st.insert(tk.END, f"\n{'─'*60}\n前 {len(hl)} 行\n{'─'*60}\n")
+                    st.insert(tk.END, _("csv.peek.file_info", path=path, size=file_size, enc=enc))
+                    st.insert(tk.END, f"\n{'─'*60}\n" + _("csv.peek.head_label", n=len(hl)) + f"\n{'─'*60}\n")
                     for i, ln in enumerate(hl, 1):
                         st.insert(tk.END, f"{i:>6}: {ln[:300]}\n")
-                    st.insert(tk.END, f"\n{'─'*60}\n后 {len(tl)} 行\n{'─'*60}\n")
+                    st.insert(tk.END, f"\n{'─'*60}\n" + _("csv.peek.tail_label", n=len(tl)) + f"\n{'─'*60}\n")
                     for i, ln in enumerate(tl, 1):
                         st.insert(tk.END, f"{i:>6}: {ln[:300]}\n")
-                    st.insert(tk.END, f"\n结果已保存: {op}\n")
+                    st.insert(tk.END, _("csv.peek.saved", path=op))
                     st.configure(state=tk.DISABLED)
                     hsb = ttk.Scrollbar(top, orient=tk.HORIZONTAL, command=st.xview)
                     hsb.pack(side=tk.BOTTOM, fill=tk.X)
@@ -1345,7 +1379,7 @@ class CSVImporterApp(tk.Tk):
             except Exception as e:
                 import traceback
                 err = traceback.format_exc()
-                self.after(0, lambda: messagebox.showerror("预览失败", err))
+                self.after(0, lambda: messagebox.showerror(_("csv.peek.fail.title"), err))
         threading.Thread(target=_run, daemon=True).start()
 
     # 工具3：文件拆分（后台线程）
@@ -1359,14 +1393,14 @@ class CSVImporterApp(tk.Tk):
             if val <= 0:
                 raise ValueError
         except ValueError:
-            messagebox.showwarning("提示", "请输入正数（行数或 MB）")
+            messagebox.showwarning(_("common.title.hint"), _("csv.split.invalid_val"))
             return
 
         name, ext = os.path.splitext(os.path.basename(path))
         ext = ext or '.txt'
         out_dir = os.path.dirname(os.path.abspath(path))
         file_size = os.path.getsize(path)
-        self._ft_split_status.set("拆分中...")
+        self._ft_split_status.set(_("csv.split.running"))
 
         def _run():
             try:
@@ -1378,34 +1412,34 @@ class CSVImporterApp(tk.Tk):
 
                 def _show(res=results):
                     top = tk.Toplevel(self)
-                    top.title("拆分完成")
+                    top.title(_("csv.split.done_title"))
                     top.geometry("800x400")
                     st = scrolledtext.ScrolledText(top, font=("Consolas", 9), wrap=tk.NONE)
                     st.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-                    st.insert(tk.END, f"源文件: {path}\n大小: {file_size:,} 字节\n")
-                    st.insert(tk.END, f"共拆分为 {len(res)} 个文件:\n\n")
+                    st.insert(tk.END, _("csv.split.src_info", path=path, size=file_size))
+                    st.insert(tk.END, _("csv.split.total", n=len(res)))
                     for fp, lc, bc in res:
-                        st.insert(tk.END, f"  {fp}\n    行数: {lc:,}  大小: {bc/1024/1024:.2f} MB\n")
+                        st.insert(tk.END, _("csv.split.file_info", path=fp, lines=lc, mb=bc/1024/1024))
                     st.configure(state=tk.DISABLED)
                     hsb = ttk.Scrollbar(top, orient=tk.HORIZONTAL, command=st.xview)
                     hsb.pack(side=tk.BOTTOM, fill=tk.X)
                     st.configure(xscrollcommand=hsb.set)
 
                 self.after(0, lambda: (
-                    self._ft_split_status.set(f"完成，共 {len(results)} 个文件"),
+                    self._ft_split_status.set(_("csv.split.done", n=len(results))),
                     _show(),
                 ))
             except FileExistsError as e:
                 self.after(0, lambda err=str(e): (
-                    self._ft_split_status.set("已中止（文件冲突）"),
-                    messagebox.showerror("文件已存在", err),
+                    self._ft_split_status.set(_("csv.split.conflict")),
+                    messagebox.showerror(_("csv.split.conflict.title"), err),
                 ))
             except Exception as e:
                 import traceback
                 err = traceback.format_exc()
                 self.after(0, lambda: (
-                    self._ft_split_status.set("拆分失败"),
-                    messagebox.showerror("拆分失败", err),
+                    self._ft_split_status.set(_("csv.split.fail")),
+                    messagebox.showerror(_("csv.split.fail.title"), err),
                 ))
         threading.Thread(target=_run, daemon=True).start()
 
@@ -1414,23 +1448,23 @@ class CSVImporterApp(tk.Tk):
     def _build_csv_char_tools(self, f):
         """Sub-tab: Feature 1 (char search) + Feature 2 (auto detect delimiter)."""
         # ── Feature 1: 字符查找 ────────────────────────────────────────────────
-        f1_lf = ttk.LabelFrame(f, text="功能1：字符/组合查找（统计出现次数）")
+        f1_lf = ttk.LabelFrame(f, text=_("csv.char.f1.label"))
         f1_lf.pack(fill=tk.X, padx=12, pady=(10, 4))
 
         row1 = ttk.Frame(f1_lf)
         row1.pack(fill=tk.X, padx=8, pady=6)
-        ttk.Label(row1, text="查找内容:").pack(side=tk.LEFT)
+        ttk.Label(row1, text=_("csv.char.search.label")).pack(side=tk.LEFT)
         self.char_search_var = tk.StringVar()
         ttk.Entry(row1, textvariable=self.char_search_var, width=12).pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(row1, text="  扫描:").pack(side=tk.LEFT)
+        ttk.Label(row1, text=_("csv.char.scan.label")).pack(side=tk.LEFT)
         self.char_scan_full_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row1, text="全文件", variable=self.char_scan_full_var).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row1, text="采样MB:").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Checkbutton(row1, text=_("csv.char.full.label"), variable=self.char_scan_full_var).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row1, text=_("csv.char.sample_mb.label")).pack(side=tk.LEFT, padx=(8, 2))
         self.char_sample_mb_var = tk.StringVar(value="10")
         ttk.Entry(row1, textvariable=self.char_sample_mb_var, width=5).pack(side=tk.LEFT)
 
-        self.char_search_btn = ttk.Button(row1, text="查找", command=self._start_char_search)
+        self.char_search_btn = ttk.Button(row1, text=_("csv.char.btn"), command=self._start_char_search)
         self.char_search_btn.pack(side=tk.LEFT, padx=10)
         self.char_search_pb = ttk.Progressbar(row1, mode="determinate", length=160)
         self.char_search_pb.pack(side=tk.LEFT)
@@ -1440,23 +1474,23 @@ class CSVImporterApp(tk.Tk):
                   wraplength=800, justify=tk.LEFT).pack(anchor=tk.W, padx=8, pady=(0, 6))
 
         # ── Feature 2: 自动探测分隔符 ──────────────────────────────────────────
-        f2_lf = ttk.LabelFrame(f, text="功能2：自动探测安全分隔符")
+        f2_lf = ttk.LabelFrame(f, text=_("csv.detect.f2.label"))
         f2_lf.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
 
         row2 = ttk.Frame(f2_lf)
         row2.pack(fill=tk.X, padx=8, pady=6)
-        ttk.Label(row2, text="组合候选字符:").pack(side=tk.LEFT)
+        ttk.Label(row2, text=_("csv.detect.combo.label")).pack(side=tk.LEFT)
         self.combo_chars_var = tk.StringVar(value="!~^|=&")
         ttk.Entry(row2, textvariable=self.combo_chars_var, width=18).pack(side=tk.LEFT, padx=4)
-        ttk.Label(row2, text="(生成所有2字符组合)", foreground="gray").pack(side=tk.LEFT)
+        ttk.Label(row2, text=_("csv.detect.combo.hint"), foreground="gray").pack(side=tk.LEFT)
 
-        ttk.Label(row2, text="  采样MB:").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Label(row2, text=_("csv.detect.mb.label")).pack(side=tk.LEFT, padx=(8, 2))
         self.auto_detect_mb_var = tk.StringVar(value="10")
         ttk.Entry(row2, textvariable=self.auto_detect_mb_var, width=5).pack(side=tk.LEFT)
         self.auto_detect_full_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row2, text="全文件", variable=self.auto_detect_full_var).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(row2, text=_("csv.detect.full.label"), variable=self.auto_detect_full_var).pack(side=tk.LEFT, padx=4)
 
-        self.auto_detect_btn = ttk.Button(row2, text="开始探测", command=self._start_auto_detect)
+        self.auto_detect_btn = ttk.Button(row2, text=_("csv.detect.btn"), command=self._start_auto_detect)
         self.auto_detect_btn.pack(side=tk.LEFT, padx=10)
 
         row3 = ttk.Frame(f2_lf)
@@ -1476,11 +1510,11 @@ class CSVImporterApp(tk.Tk):
     def _start_char_search(self):
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先选择文件")
+            messagebox.showwarning(_("common.title.hint"), _("csv.char.no_file"))
             return
         pattern = self.char_search_var.get()
         if not pattern:
-            messagebox.showwarning("提示", "请输入要查找的字符或组合")
+            messagebox.showwarning(_("common.title.hint"), _("csv.char.no_pattern"))
             return
 
         file_size = os.path.getsize(path)
@@ -1495,7 +1529,7 @@ class CSVImporterApp(tk.Tk):
 
         self.char_search_btn.configure(state="disabled")
         self.char_search_pb["value"] = 0
-        self.char_search_result_var.set("扫描中...")
+        self.char_search_result_var.set(_("csv.char.scanning"))
 
         threading.Thread(
             target=self._do_char_search,
@@ -1529,11 +1563,11 @@ class CSVImporterApp(tk.Tk):
                     self.after(0, lambda p=pct: self.char_search_pb.configure(value=p))
 
             is_sample = scan_size < file_size
-            note = f"（采样前 {scan_size // 1024 // 1024} MB）" if is_sample else ""
+            note = _("csv.char.sample_note", mb=scan_size // 1024 // 1024) if is_sample else ""
             if count == 0:
-                msg = f"✅  '{pattern_str}'  不存在于文件中{note}，可安全用作分隔符"
+                msg = _("csv.char.result.safe", pattern=pattern_str, note=note)
             else:
-                msg = f"❌  '{pattern_str}'  出现 {count:,} 次{note}"
+                msg = _("csv.char.result.found", pattern=pattern_str, count=count, note=note)
 
             self.after(0, lambda m=msg: (
                 self.char_search_pb.configure(value=100),
@@ -1543,7 +1577,7 @@ class CSVImporterApp(tk.Tk):
         except Exception as e:
             err = str(e)
             self.after(0, lambda: (
-                self.char_search_result_var.set(f"错误: {err}"),
+                self.char_search_result_var.set(_("csv.char.err", err=err)),
                 self.char_search_btn.configure(state="normal"),
             ))
 
@@ -1552,7 +1586,7 @@ class CSVImporterApp(tk.Tk):
     def _start_auto_detect(self):
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先选择文件")
+            messagebox.showwarning(_("common.title.hint"), _("csv.detect.no_file"))
             return
 
         combo_input = self.combo_chars_var.get().strip()
@@ -1570,7 +1604,7 @@ class CSVImporterApp(tk.Tk):
 
         self.auto_detect_btn.configure(state="disabled")
         self.auto_detect_pb["value"] = 0
-        self.auto_detect_status_var.set("扫描中...")
+        self.auto_detect_status_var.set(_("csv.detect.scanning"))
         self._auto_detect_result_clear()
 
         threading.Thread(
@@ -1599,7 +1633,7 @@ class CSVImporterApp(tk.Tk):
             all_patterns = single_patterns + combo_patterns
             if not all_patterns:
                 self.after(0, lambda: (
-                    self.auto_detect_status_var.set("无有效模式"),
+                    self.auto_detect_status_var.set(_("csv.detect.no_pattern")),
                     self.auto_detect_btn.configure(state="normal"),
                 ))
                 return
@@ -1626,27 +1660,27 @@ class CSVImporterApp(tk.Tk):
                     self.after(0, lambda p=pct: self.auto_detect_pb.configure(value=p))
 
             is_sample = scan_size < file_size
-            note = f"（采样前 {scan_size // 1024 // 1024} MB）" if is_sample else "（全文件）"
+            note = _("csv.detect.sample_note", mb=scan_size // 1024 // 1024) if is_sample else _("csv.detect.full_note")
 
-            lines = [f"扫描完成 {note}\n", "=" * 60 + "\n"]
+            lines = [_("csv.detect.result.title", note=note), "=" * 60 + "\n"]
 
-            # 单字符结果
+            # single-char results
             safe_single = [s for s, p in single_patterns if counts[p] == 0]
             unsafe_single = sorted(
                 [(s, counts[p]) for s, p in single_patterns if counts[p] > 0],
                 key=lambda x: x[1])
 
-            lines.append("\n【单字符】可安全使用（文件中不存在）：\n")
+            lines.append(_("csv.detect.single.safe.hdr"))
             if safe_single:
                 lines.append("  " + "  ".join(safe_single) + "\n")
             else:
-                lines.append("  （无）\n")
+                lines.append(_("csv.detect.single.none"))
 
-            lines.append("\n【单字符】已存在于文件中（出现次数）：\n")
+            lines.append(_("csv.detect.single.unsafe.hdr"))
             for s, cnt in unsafe_single:
-                lines.append(f"  {repr(s):<8}  {cnt:>14,} 次\n")
+                lines.append(f"  {repr(s):<8}  {cnt:>14,}" + _("csv.detect.single.count_unit"))
 
-            # 组合字符结果
+            # combo-char results
             if combo_patterns:
                 safe_combo = [s for s, p in combo_patterns if counts[p] == 0]
                 unsafe_combo = sorted(
@@ -1656,36 +1690,36 @@ class CSVImporterApp(tk.Tk):
                 safe_same = [s for s in safe_combo if len(s) == 2 and s[0] == s[1]]
                 safe_diff = [s for s in safe_combo if len(s) != 2 or s[0] != s[1]]
 
-                lines.append(f"\n【组合字符】可安全使用（共 {len(safe_combo)} 个）：\n")
+                lines.append(_("csv.detect.combo.safe.hdr", n=len(safe_combo)))
                 if safe_same:
-                    lines.append("  重复: " + "  ".join(safe_same) + "\n")
+                    lines.append(_("csv.detect.combo.repeat") + "  ".join(safe_same) + "\n")
                 if safe_diff:
                     for i in range(0, len(safe_diff), 15):
                         lines.append("  " + "  ".join(safe_diff[i:i + 15]) + "\n")
                 if not safe_combo:
-                    lines.append("  （无）\n")
+                    lines.append(_("csv.detect.single.none"))
 
                 if safe_combo:
                     best = safe_same[0] if safe_same else safe_diff[0]
-                    lines.append(f"\n  ★ 推荐: {repr(best)}\n")
+                    lines.append(_("csv.detect.combo.best", r=repr(best)))
                     lines.append(f"     Python: SEP = {repr(best)}\n")
                     lines.append(f"             fields = line.rstrip('\\n').split(SEP)\n")
 
-                lines.append(f"\n【组合字符】已存在（出现最少前10个）：\n")
+                lines.append(_("csv.detect.combo.unsafe.hdr"))
                 for s, cnt in unsafe_combo[:10]:
-                    lines.append(f"  {repr(s):<8}  {cnt:>14,} 次\n")
+                    lines.append(f"  {repr(s):<8}  {cnt:>14,}" + _("csv.detect.single.count_unit"))
 
             result_text = "".join(lines)
             self.after(0, lambda t=result_text: (
                 self.auto_detect_pb.configure(value=100),
-                self.auto_detect_status_var.set("探测完成"),
+                self.auto_detect_status_var.set(_("csv.detect.done")),
                 self.auto_detect_btn.configure(state="normal"),
                 self._auto_detect_result_set(t),
             ))
         except Exception as e:
             err = str(e)
             self.after(0, lambda: (
-                self.auto_detect_status_var.set(f"错误: {err}"),
+                self.auto_detect_status_var.set(_("csv.detect.err", err=err)),
                 self.auto_detect_btn.configure(state="normal"),
             ))
 
@@ -1705,17 +1739,17 @@ class CSVImporterApp(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
     def _build_validate_tab(self):
         f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  数据校验  ")
+        self.nb.add(f, text=_("tab.validate"))
 
         # ── 控制区 ────────────────────────────────────────────────────────────
         ctrl = ttk.Frame(f)
         ctrl.pack(fill=tk.X, padx=12, pady=(4, 4))
-        self.val_btn = ttk.Button(ctrl, text="开始校验", command=self._start_validation)
+        self.val_btn = ttk.Button(ctrl, text=_("val.btn.start"), command=self._start_validation)
         self.val_btn.pack(side=tk.LEFT, padx=4)
-        self.add_invalid_btn = ttk.Button(ctrl, text="把未符合校验行加入忽略",
+        self.add_invalid_btn = ttk.Button(ctrl, text=_("val.btn.add_ignore"),
                                           command=self._add_invalid_to_ignore, state="disabled")
         self.add_invalid_btn.pack(side=tk.LEFT, padx=8)
-        self.val_status_var = tk.StringVar(value="等待校验...")
+        self.val_status_var = tk.StringVar(value=_("val.status.waiting"))
         ttk.Label(ctrl, textvariable=self.val_status_var).pack(side=tk.LEFT, padx=10)
 
         self.val_pb = ttk.Progressbar(f, mode="determinate")
@@ -1724,22 +1758,22 @@ class CSVImporterApp(tk.Tk):
         stat = ttk.Frame(f)
         stat.pack(fill=tk.X, padx=12, pady=2)
         for label, attr, color in [
-            ("标准列数:", "std_cols_var", "blue"),
-            ("总行数:", "total_rows_var", "black"),
-            ("数据行数:", "data_rows_var", "black"),
-            ("异常行数:", "invalid_rows_var", "red"),
+            (_("val.stat.std_cols"), "std_cols_var", "blue"),
+            (_("val.stat.total"), "total_rows_var", "black"),
+            (_("val.stat.data"), "data_rows_var", "black"),
+            (_("val.stat.invalid"), "invalid_rows_var", "red"),
         ]:
             ttk.Label(stat, text=label).pack(side=tk.LEFT, padx=(12, 2))
             var = tk.StringVar(value="-")
             setattr(self, attr, var)
             ttk.Label(stat, textvariable=var, foreground=color, width=8).pack(side=tk.LEFT)
 
-        ttk.Label(f, text="校验日志（异常行明细）：").pack(anchor=tk.W, padx=12, pady=(8, 2))
+        ttk.Label(f, text=_("val.log.label")).pack(anchor=tk.W, padx=12, pady=(8, 2))
         self.val_log = scrolledtext.ScrolledText(f, height=12, state=tk.DISABLED,
                                                   font=("Consolas", 9))
         self.val_log.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 4))
 
-        sum_lf = ttk.LabelFrame(f, text="导入信息汇总")
+        sum_lf = ttk.LabelFrame(f, text=_("val.summary.label"))
         sum_lf.pack(fill=tk.X, padx=12, pady=(4, 8))
         self.val_summary = scrolledtext.ScrolledText(sum_lf, height=14, state=tk.DISABLED,
                                                       font=("Consolas", 9), wrap=tk.WORD)
@@ -1757,7 +1791,7 @@ class CSVImporterApp(tk.Tk):
         """读取忽略规则之外的前100行，自动探测固定宽度分割位置，写入分割位置文本框。"""
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先在【CSV 文件配置】中选择文件")
+            messagebox.showwarning(_("common.title.hint"), _("preview.fw.no_file"))
             return
         encoding = self.csv_encoding_var.get() or detect_encoding(path)
         self.csv_encoding_var.set(encoding)
@@ -1793,7 +1827,7 @@ class CSVImporterApp(tk.Tk):
 
             if not sampled:
                 self.after(0, lambda: (
-                    messagebox.showwarning("提示", "应用忽略规则后无有效行，无法探测"),
+                    messagebox.showwarning(_("common.title.hint"), _("preview.fw.no_rows")),
                     self.fw_auto_detect_btn.configure(state="normal"),
                 ))
                 return
@@ -1815,9 +1849,8 @@ class CSVImporterApp(tk.Tk):
                 self._fw_positions_var.set(ps)
                 self.fw_auto_detect_btn.configure(state="normal")
                 messagebox.showinfo(
-                    "自动检测完成",
-                    f"一共检测了 {ns} 行（忽略规则之外，投票阈值 70%）\n"
-                    f"建议分割位置：{ps}"
+                    _("preview.fw.done.title"),
+                    _("preview.fw.done.msg", n=ns, positions=ps)
                 )
 
             self.after(0, _done)
@@ -1825,14 +1858,14 @@ class CSVImporterApp(tk.Tk):
         except Exception as e:
             err = str(e)
             self.after(0, lambda: (
-                messagebox.showerror("检测失败", err),
+                messagebox.showerror(_("preview.fw.fail.title"), err),
                 self.fw_auto_detect_btn.configure(state="normal"),
             ))
 
     def _start_validation(self):
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先在【CSV 文件配置】中选择文件")
+            messagebox.showwarning(_("common.title.hint"), _("val.no_file"))
             return
         encoding = self.csv_encoding_var.get() or detect_encoding(path)
         self.csv_encoding_var.set(encoding)
@@ -1843,8 +1876,7 @@ class CSVImporterApp(tk.Tk):
         if mode == "fixedwidth":
             positions_str = self._fw_positions_var.get().strip()
             if not positions_str:
-                messagebox.showwarning("提示",
-                    '请先在【数据预览 → 分割模式 → 固定宽度模式】中点击"自动检测"，或手动填写分割位置')
+                messagebox.showwarning(_("common.title.hint"), _("val.fw.no_positions"))
                 return
             try:
                 fw_positions = sorted(set(
@@ -1853,11 +1885,11 @@ class CSVImporterApp(tk.Tk):
                 if not fw_positions:
                     raise ValueError
             except ValueError:
-                messagebox.showwarning("提示", "分割位置格式错误，应为逗号分隔整数，例: 0, 10, 20, 40")
+                messagebox.showwarning(_("common.title.hint"), _("val.fw.bad_positions"))
                 return
 
         self._val_log_clear()
-        self.val_status_var.set("校验中... 已读 0 行")
+        self.val_status_var.set(_("val.status.start"))
         self.val_pb.configure(mode="indeterminate")
         self.val_pb.start(20)
         self.val_btn.configure(state="disabled")
@@ -1870,7 +1902,7 @@ class CSVImporterApp(tk.Tk):
         if has_header:
             hr_str = self.header_row_var.get().strip()
             if not hr_str or not hr_str.isdigit() or int(hr_str) < 1:
-                messagebox.showwarning("提示", '已勾选"文本包含标题行"，请填写标题行的行号（正整数）')
+                messagebox.showwarning(_("common.title.hint"), _("val.header_hint"))
                 self.val_btn.configure(state="normal")
                 return
             header_row = int(hr_str)
@@ -1932,7 +1964,7 @@ class CSVImporterApp(tk.Tk):
                     if total_lines % 50_000 == 0:
                         n = total_lines
                         self.after(0, lambda n=n:
-                            self.val_status_var.set(f"校验中... 已读 {n:,} 行"))
+                            self.val_status_var.set(_("val.status.progress", n=n)))
                     yield lineno, row
 
             for lineno, row in _filtered_iter(_raw_with_progress()):
@@ -1956,7 +1988,7 @@ class CSVImporterApp(tk.Tk):
 
             if data_count == 0 and not header_seen:
                 self.after(0, lambda: (
-                    messagebox.showwarning("提示", "文件为空或全部行被忽略"),
+                    messagebox.showwarning(_("common.title.hint"), _("val.empty_file")),
                     self.val_btn.configure(state="normal"),
                 ))
                 return
@@ -1996,8 +2028,8 @@ class CSVImporterApp(tk.Tk):
             self.after(0, lambda: (
                 self.val_pb.stop(),
                 self.val_pb.configure(mode="determinate"),
-                messagebox.showerror("校验错误", err),
-                self.val_status_var.set("校验失败"),
+                messagebox.showerror(_("val.err.title"), err),
+                self.val_status_var.set(_("val.status.fail")),
                 self.val_btn.configure(state="normal"),
             ))
 
@@ -2079,24 +2111,24 @@ class CSVImporterApp(tk.Tk):
         self.val_btn.configure(state="normal")
 
         filename = os.path.basename(path)
-        self._val_log_append(f"文件: {path}\n")
-        self._val_log_append(f"标准列数: {std_cols}  总行数: {total}  数据行: {data_count}  异常行: {len(invalid)}\n")
+        self._val_log_append(_("val.log.file", path=path))
+        self._val_log_append(_("val.log.summary", std_cols=std_cols, total=total, data_count=data_count, invalid_count=len(invalid)))
         self._val_log_append("─" * 80 + "\n")
 
         if invalid:
-            self._val_log_append(f"{'行号':>10}  {'列数':>6}  内容预览\n")
+            self._val_log_append(f"{_('val.log.hdr_lineno'):>10}  {_('val.log.hdr_colcnt'):>6}  {_('val.log.hdr_preview')}\n")
             self._val_log_append("─" * 80 + "\n")
-            log_lines = [f"文件: {path}\n标准列数: {std_cols}\n\n"]
+            log_lines = [_("val.log.file_full", path=path, std_cols=std_cols)]
             for lineno, col_cnt, row in invalid:
                 preview = delimiter_join(row, result["delimiter"])[:200]
                 line = f"{lineno:>10}  {col_cnt:>6}  {preview}\n"
                 self._val_log_append(line)
                 log_lines.append(line)
-                self.logger.warning(f"异常行 {lineno}: 列数={col_cnt}")
+                self.logger.warning(f"invalid row {lineno}: col_count={col_cnt}")
 
-            # 打印失败行号汇总
+            # print invalid line number summary
             linenos_str = ",".join(str(ln) for ln, *_ in invalid)
-            self._val_log_append(f"\n异常行行号：{linenos_str}\n")
+            self._val_log_append(_("val.log.linenos", linenos=linenos_str))
 
             # 保存校验日志
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2105,17 +2137,15 @@ class CSVImporterApp(tk.Tk):
                 lf.writelines(log_lines)
 
             self.add_invalid_btn.configure(state="normal")
-            self.val_status_var.set(f"校验完成，发现 {len(invalid)} 条异常")
+            self.val_status_var.set(_("val.status.done_invalid", n=len(invalid)))
             messagebox.showwarning(
-                "校验结果",
-                f"文件：{filename}\n"
-                f"发现 {len(invalid)} 条列数不符合的数据（标准列数={std_cols}）\n\n"
-                f"详细日志已保存至：\n{log_path}",
+                _("val.result.title"),
+                _("val.result.invalid.msg", filename=filename, n=len(invalid), std_cols=std_cols, log_path=log_path),
             )
         else:
             self.add_invalid_btn.configure(state="disabled")
-            self.val_status_var.set("✓ 校验通过，无异常，可以导入")
-            messagebox.showinfo("校验结果", f"文件：{filename}\n所有数据格式正常！")
+            self.val_status_var.set(_("val.status.pass"))
+            messagebox.showinfo(_("val.result.title"), _("val.result.pass.msg", filename=filename))
 
         self._fill_val_summary(result, path)
 
@@ -2135,7 +2165,7 @@ class CSVImporterApp(tk.Tk):
             return
         invalid = self.validation_result.get("invalid", [])
         if not invalid:
-            messagebox.showinfo("提示", "没有异常行可加入忽略")
+            messagebox.showinfo(_("val.add_ignore.title"), _("val.add_ignore.none"))
             return
         new_set = {lineno for lineno, *_ in invalid}
         merged = self._skip_middle | new_set
@@ -2144,13 +2174,13 @@ class CSVImporterApp(tk.Tk):
         self.skip_middle_var.set(normalized)
         # 用自定义对话框显示，避免内容过长撑爆 messagebox 超出屏幕
         dlg = tk.Toplevel(self)
-        dlg.title("提示")
+        dlg.title(_("val.add_ignore.title"))
         dlg.resizable(True, True)
         dlg.grab_set()
 
-        ttk.Label(dlg, text=f'已将 {len(new_set)} 个异常行合并到"忽略中间行"中',
+        ttk.Label(dlg, text=_("val.add_ignore.done", n=len(new_set)),
                   font=("", 10, "bold")).pack(padx=16, pady=(14, 4), anchor=tk.W)
-        ttk.Label(dlg, text="当前忽略中间行：").pack(padx=16, anchor=tk.W)
+        ttk.Label(dlg, text=_("val.add_ignore.current")).pack(padx=16, anchor=tk.W)
 
         txt_frame = ttk.Frame(dlg)
         txt_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(4, 8))
@@ -2163,7 +2193,7 @@ class CSVImporterApp(tk.Tk):
         txt.insert("1.0", normalized)
         txt.configure(state=tk.DISABLED)
 
-        ttk.Button(dlg, text="确定", command=dlg.destroy, width=10).pack(pady=(0, 12))
+        ttk.Button(dlg, text=_("val.add_ignore.btn_ok"), command=dlg.destroy, width=10).pack(pady=(0, 12))
         dlg.update_idletasks()
         # 居中显示，限制最大高度不超过屏幕
         max_h = int(self.winfo_screenheight() * 0.8)
@@ -2186,29 +2216,29 @@ class CSVImporterApp(tk.Tk):
         header_count = 1 if has_header else 0
 
         lines = [
-            f"文件大小: {size_mb:.2f} MB",
-            f"文件总行数: {total_lines:,} 行",
-            f"忽略总行数: {ignored:,} 行",
-            f"是否包含表头: {'是' if has_header else '否'}",
+            _("val.summary.size", mb=size_mb),
+            _("val.summary.total", n=total_lines),
+            _("val.summary.ignored", n=ignored),
+            _("val.summary.has_header", yn=_("val.summary.yes") if has_header else _("val.summary.no")),
         ]
         if has_header and columns:
-            lines.append(f"表头信息: {', '.join(columns)}")
+            lines.append(_("val.summary.header_info", cols=", ".join(columns)))
         lines += [
-            f"校验通过行数: {pass_count:,} 行",
-            f"异常行数: {invalid_count:,} 行",
+            _("val.summary.pass_count", n=pass_count),
+            _("val.summary.invalid_count", n=invalid_count),
         ]
 
-        eq_parts = [f"忽略行数({ignored})"]
+        eq_parts = [_("val.summary.eq_ignored", n=ignored)]
         if has_header:
-            eq_parts.append("表头(1)")
-        eq_parts += [f"校验通过行数({pass_count})", f"异常行数({invalid_count})"]
+            eq_parts.append(_("val.summary.eq_header"))
+        eq_parts += [_("val.summary.eq_pass", n=pass_count), _("val.summary.eq_invalid", n=invalid_count)]
         eq_sum = ignored + header_count + pass_count + invalid_count
         eq_str = " + ".join(eq_parts) + f" = {eq_sum}"
-        lines.append(f"校验关系: {eq_str}")
+        lines.append(_("val.summary.relation", eq=eq_str))
         if eq_sum == total_lines:
-            lines.append("✓ 合计与文件总行数一致")
+            lines.append(_("val.summary.ok"))
         else:
-            lines.append(f"⚠ 合计({eq_sum}) ≠ 文件总行数({total_lines})")
+            lines.append(_("val.summary.mismatch", sum=eq_sum, total=total_lines))
 
         summary_text = "\n".join(lines)
         self.val_summary.configure(state=tk.NORMAL)
@@ -2266,7 +2296,7 @@ class CSVImporterApp(tk.Tk):
                         if total_lines % 50_000 == 0:
                             n = total_lines
                             self.after(0, lambda n=n:
-                                self.val_status_var.set(f"校验中... 已读 {n:,} 行"))
+                                self.val_status_var.set(_("val.status.progress", n=n)))
                         yield lineno, raw_line
 
                 for lineno, line_str in _fw_filtered_iter(_counted(fh)):
@@ -2280,7 +2310,7 @@ class CSVImporterApp(tk.Tk):
 
             if data_count == 0 and not header_seen:
                 self.after(0, lambda: (
-                    messagebox.showwarning("提示", "文件为空或全部行被忽略"),
+                    messagebox.showwarning(_("common.title.hint"), _("val.empty_file")),
                     self.val_btn.configure(state="normal"),
                 ))
                 return
@@ -2319,8 +2349,8 @@ class CSVImporterApp(tk.Tk):
             self.after(0, lambda: (
                 self.val_pb.stop(),
                 self.val_pb.configure(mode="determinate"),
-                messagebox.showerror("校验错误", err),
-                self.val_status_var.set("校验失败"),
+                messagebox.showerror(_("val.err.title"), err),
+                self.val_status_var.set(_("val.status.fail")),
                 self.val_btn.configure(state="normal"),
             ))
 
@@ -2347,26 +2377,24 @@ class CSVImporterApp(tk.Tk):
 
         filename = os.path.basename(path)
         pos_str = ", ".join(str(p) for p in positions)
-        self._val_log_append(f"文件: {path}\n")
-        self._val_log_append(f"模式: 固定宽度  分割位置: {pos_str}\n")
-        self._val_log_append(
-            f"列数: {std_cols}  总行数: {total}  数据行: {data_count}  "
-            f"行长不足: {len(invalid)}\n")
+        self._val_log_append(_("val.log.file", path=path))
+        self._val_log_append(_("val.log.fw.mode", pos_str=pos_str))
+        self._val_log_append(_("val.log.fw.summary", std_cols=std_cols, total=total, data_count=data_count, invalid_count=len(invalid)))
         self._val_log_append("─" * 80 + "\n")
 
         if invalid:
-            self._val_log_append(f"{'行号':>10}  {'行长度':>8}  内容预览\n")
+            self._val_log_append(f"{_('val.log.fw.hdr_lineno'):>10}  {_('val.log.fw.hdr_rawlen'):>8}  {_('val.log.hdr_preview')}\n")
             self._val_log_append("─" * 80 + "\n")
-            log_lines = [f"文件: {path}\n分割位置: {pos_str}\n\n"]
+            log_lines = [_("val.log.fw.file_full", path=path, pos_str=pos_str)]
             for lineno, raw_len, fields in invalid:
                 preview = "|".join(str(v) for v in fields)[:200]
                 line_str = f"{lineno:>10}  {raw_len:>8}  {preview}\n"
                 self._val_log_append(line_str)
                 log_lines.append(line_str)
-                self.logger.warning(f"行 {lineno}: 行长={raw_len}，不足 {positions[-1]}")
+                self.logger.warning(f"row {lineno}: length={raw_len}, required {positions[-1]}")
 
             linenos_str = ",".join(str(ln) for ln, *_ in invalid)
-            self._val_log_append(f"\n异常行行号：{linenos_str}\n")
+            self._val_log_append(_("val.log.fw.linenos", linenos=linenos_str))
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             log_path = os.path.join(LOG_DIR, f"validate_fw_{ts}.log")
@@ -2374,19 +2402,16 @@ class CSVImporterApp(tk.Tk):
                 lf.writelines(log_lines)
 
             self.add_invalid_btn.configure(state="normal")
-            self.val_status_var.set(f"校验完成，发现 {len(invalid)} 行长度不足")
+            self.val_status_var.set(_("val.fw.status.done", n=len(invalid)))
             messagebox.showwarning(
-                "校验结果",
-                f"文件：{filename}\n固定宽度模式，分割位置: {pos_str}\n"
-                f"发现 {len(invalid)} 行长度不足（未达到第 {positions[-1]} 列）\n\n"
-                f"详细日志已保存至：\n{log_path}",
+                _("val.result.title"),
+                _("val.fw.result.invalid.msg", filename=filename, pos_str=pos_str, n=len(invalid), last_pos=positions[-1], log_path=log_path),
             )
         else:
             self.add_invalid_btn.configure(state="disabled")
-            self.val_status_var.set("✓ 固定宽度校验通过，所有行长度符合预期")
-            messagebox.showinfo("校验结果",
-                f"文件：{filename}\n固定宽度校验通过！\n"
-                f"分割位置: {pos_str}\n所有行长度均满足要求。")
+            self.val_status_var.set(_("val.fw.status.pass"))
+            messagebox.showinfo(_("val.result.title"),
+                _("val.fw.result.pass.msg", filename=filename, pos_str=pos_str))
 
         self._fill_val_summary(result, path)
 
@@ -2395,56 +2420,56 @@ class CSVImporterApp(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
     def _build_preview_tab(self):
         f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  数据预览  ")
+        self.nb.add(f, text=_("tab.preview"))
 
         # ── 分割模式选择 ──────────────────────────────────────────────────────
-        mode_lf = ttk.LabelFrame(f, text="分割模式")
+        mode_lf = ttk.LabelFrame(f, text=_("preview.mode.label"))
         mode_lf.pack(fill=tk.X, padx=12, pady=(10, 4))
 
         mode_row = ttk.Frame(mode_lf)
         mode_row.pack(fill=tk.X, padx=8, pady=(6, 2))
-        ttk.Radiobutton(mode_row, text="分隔符模式（CSV）", variable=self._val_mode_var,
+        ttk.Radiobutton(mode_row, text=_("preview.mode.delimiter"), variable=self._val_mode_var,
                         value="delimiter", command=self._on_val_mode_change).pack(
             side=tk.LEFT, padx=4)
-        ttk.Radiobutton(mode_row, text="固定宽度模式", variable=self._val_mode_var,
+        ttk.Radiobutton(mode_row, text=_("preview.mode.fixedwidth"), variable=self._val_mode_var,
                         value="fixedwidth", command=self._on_val_mode_change).pack(
             side=tk.LEFT, padx=12)
 
         # 分隔符模式配置行（默认显示）
         self._csv_config_row = ttk.Frame(mode_lf)
         self._csv_config_row.pack(fill=tk.X, padx=8, pady=(2, 6))
-        ttk.Label(self._csv_config_row, text="列分隔符:").pack(side=tk.LEFT)
+        ttk.Label(self._csv_config_row, text=_("preview.delimiter.label")).pack(side=tk.LEFT)
         ttk.Entry(self._csv_config_row, textvariable=self.delimiter_var, width=8).pack(
             side=tk.LEFT, padx=4)
-        ttk.Label(self._csv_config_row, text="引用字符:").pack(side=tk.LEFT, padx=(12, 2))
+        ttk.Label(self._csv_config_row, text=_("preview.quotechar.label")).pack(side=tk.LEFT, padx=(12, 2))
         ttk.Entry(self._csv_config_row, textvariable=self.quotechar_var, width=5).pack(
             side=tk.LEFT)
 
         # 固定宽度模式配置行（默认隐藏）
         self._fw_config_row = ttk.Frame(mode_lf)
         self._fw_config_row.pack(fill=tk.X, padx=8, pady=(2, 6))
-        ttk.Label(self._fw_config_row, text="分割位置:").pack(side=tk.LEFT)
+        ttk.Label(self._fw_config_row, text=_("preview.fw.pos.label")).pack(side=tk.LEFT)
         ttk.Entry(self._fw_config_row, textvariable=self._fw_positions_var, width=46).pack(
             side=tk.LEFT, padx=4)
-        ttk.Label(self._fw_config_row, text="(例: 0, 10, 20, 40)", foreground="gray").pack(
+        ttk.Label(self._fw_config_row, text=_("preview.fw.pos.hint"), foreground="gray").pack(
             side=tk.LEFT)
         self.fw_auto_detect_btn = ttk.Button(
-            self._fw_config_row, text="自动检测", command=self._auto_detect_fw_positions)
+            self._fw_config_row, text=_("preview.fw.auto.btn"), command=self._auto_detect_fw_positions)
         self.fw_auto_detect_btn.pack(side=tk.LEFT, padx=8)
         self._fw_config_row.pack_forget()  # 默认隐藏
 
         # 工具栏
         ctrl = ttk.Frame(f)
         ctrl.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ttk.Button(ctrl, text="加载预览", command=self._load_preview).pack(side=tk.LEFT, padx=4)
+        ttk.Button(ctrl, text=_("preview.btn.load"), command=self._load_preview).pack(side=tk.LEFT, padx=4)
         ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
 
         # 分页控件
-        self.prev_page_btn = ttk.Button(ctrl, text="◀ 上一页", command=self._preview_prev, state="disabled")
+        self.prev_page_btn = ttk.Button(ctrl, text=_("preview.page.prev"), command=self._preview_prev, state="disabled")
         self.prev_page_btn.pack(side=tk.LEFT, padx=2)
-        self.preview_page_var = tk.StringVar(value="第 0 页")
+        self.preview_page_var = tk.StringVar(value="")
         ttk.Label(ctrl, textvariable=self.preview_page_var, width=14, anchor=tk.CENTER).pack(side=tk.LEFT, padx=4)
-        self.next_page_btn = ttk.Button(ctrl, text="下一页 ▶", command=self._preview_next, state="disabled")
+        self.next_page_btn = ttk.Button(ctrl, text=_("preview.page.next"), command=self._preview_next, state="disabled")
         self.next_page_btn.pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
@@ -2468,7 +2493,7 @@ class CSVImporterApp(tk.Tk):
     def _load_preview(self):
         path = self.csv_path_var.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("提示", "请先在【CSV 文件配置】中选择文件")
+            messagebox.showwarning(_("common.title.hint"), _("preview.no_file"))
             return
 
         encoding = self.csv_encoding_var.get() or detect_encoding(path)
@@ -2482,7 +2507,7 @@ class CSVImporterApp(tk.Tk):
             if hr_str.isdigit() and int(hr_str) >= 1:
                 header_row = int(hr_str)
 
-        self.preview_info_var.set("读取中...")
+        self.preview_info_var.set(_("preview.loading"))
         self.update_idletasks()
 
         threading.Thread(
@@ -2560,7 +2585,7 @@ class CSVImporterApp(tk.Tk):
                         break
 
                 if not first_chunk:
-                    self.after(0, lambda: self.preview_info_var.set("文件为空或全被忽略"))
+                    self.after(0, lambda: self.preview_info_var.set(_("preview.empty")))
                     return
 
                 if columns is None:
@@ -2584,7 +2609,7 @@ class CSVImporterApp(tk.Tk):
                             enumerate(_iter_rows(), start=1)]
                 rows_filtered = self._get_skip_slice(rows_raw)
                 if not rows_filtered:
-                    self.after(0, lambda: self.preview_info_var.set("文件为空"))
+                    self.after(0, lambda: self.preview_info_var.set(_("preview.empty_small")))
                     return
 
                 if has_header and header_row > 0:
@@ -2613,8 +2638,8 @@ class CSVImporterApp(tk.Tk):
                 self.after(0, self._render_preview_page)
 
         except Exception as e:
-            self.after(0, lambda err=str(e): messagebox.showerror("预览错误", err))
-            self.after(0, lambda: self.preview_info_var.set("加载失败"))
+            self.after(0, lambda err=str(e): messagebox.showerror(_("preview.err.title"), err))
+            self.after(0, lambda: self.preview_info_var.set(_("preview.load_fail")))
 
     def _fetch_next_lazy_chunk(self):
         """后台线程：从生成器取下一块数据并缓存。"""
@@ -2633,8 +2658,8 @@ class CSVImporterApp(tk.Tk):
                 self._preview_lazy_done = True
             self.after(0, self._render_preview_page)
         except Exception as e:
-            self.after(0, lambda err=str(e): messagebox.showerror("加载错误", err))
-            self.after(0, lambda: self.preview_info_var.set("加载失败"))
+            self.after(0, lambda err=str(e): messagebox.showerror(_("preview.load_err.title"), err))
+            self.after(0, lambda: self.preview_info_var.set(_("preview.load_fail")))
 
     def _render_preview_page(self):
         columns = self._preview_columns
@@ -2646,8 +2671,8 @@ class CSVImporterApp(tk.Tk):
             page_rows = self._preview_lazy_chunks[page]
             total_cached = sum(len(c) for c in self._preview_lazy_chunks)
             can_next = (page < len(self._preview_lazy_chunks) - 1) or not self._preview_lazy_done
-            page_label = f"第 {page + 1} 页（流式）"
-            info_label = f"本页 {len(page_rows)} 行 · 已加载共 {total_cached} 行"
+            page_label = _("preview.page.streaming", page=page + 1)
+            info_label = _("preview.info.rows_cached", page_rows=len(page_rows), total_cached=total_cached)
         else:
             all_rows = self._preview_all_rows
             ps = self._preview_page_size
@@ -2657,8 +2682,8 @@ class CSVImporterApp(tk.Tk):
             end = min(start + ps, total)
             page_rows = all_rows[start:end]
             can_next = page < total_pages - 1
-            page_label = f"第 {page + 1} / {total_pages} 页"
-            info_label = f"共 {total} 行 · 显示 {start + 1}–{end}"
+            page_label = _("preview.page.label_total", page=page + 1, total=total_pages)
+            info_label = _("preview.info.rows_total", total=total, start=start + 1, end=end)
 
         # 取上次保存的列宽（切换页时保持宽度）
         saved_widths = self.preview_grid.get_col_widths() if self._preview_columns else {}
@@ -2683,7 +2708,7 @@ class CSVImporterApp(tk.Tk):
             elif not self._preview_lazy_done:
                 # 需要从文件读取下一块
                 self.next_page_btn.configure(state="disabled")
-                self.preview_info_var.set("加载中...")
+                self.preview_info_var.set(_("preview.load_more"))
                 threading.Thread(target=self._fetch_next_lazy_chunk, daemon=True).start()
         else:
             total = len(self._preview_all_rows)
@@ -2697,45 +2722,45 @@ class CSVImporterApp(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
     def _build_import_tab(self):
         f = ttk.Frame(self.nb)
-        self.nb.add(f, text="  数据导入  ")
+        self.nb.add(f, text=_("tab.import"))
 
-        opt_lf = ttk.LabelFrame(f, text="导入配置")
+        opt_lf = ttk.LabelFrame(f, text=_("import.opt.label"))
         opt_lf.pack(fill=tk.X, padx=12, pady=(12, 4))
 
-        ttk.Label(opt_lf, text="目标表名:").grid(row=0, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(opt_lf, text=_("import.table.label")).grid(row=0, column=0, sticky=tk.W, padx=8, pady=6)
         self.table_name_var = tk.StringVar()
         ttk.Entry(opt_lf, textvariable=self.table_name_var, width=32).grid(
             row=0, column=1, sticky=tk.W, padx=6, pady=6)
 
-        ttk.Label(opt_lf, text="每批提交行数:").grid(row=0, column=2, sticky=tk.W, padx=(20, 6))
+        ttk.Label(opt_lf, text=_("import.batch.label")).grid(row=0, column=2, sticky=tk.W, padx=(20, 6))
         self.batch_size_var = tk.StringVar(value="1000")
         ttk.Entry(opt_lf, textvariable=self.batch_size_var, width=10).grid(row=0, column=3, sticky=tk.W)
 
         self.create_table_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_lf, text="表不存在时自动建表（所有字段 TEXT）",
+        ttk.Checkbutton(opt_lf, text=_("import.create_table"),
                          variable=self.create_table_var).grid(
             row=1, column=0, columnspan=4, sticky=tk.W, padx=8, pady=3)
 
         self.truncate_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(opt_lf, text="导入前清空表数据 (DELETE FROM)",
+        ttk.Checkbutton(opt_lf, text=_("import.truncate"),
                          variable=self.truncate_var).grid(
             row=2, column=0, columnspan=4, sticky=tk.W, padx=8, pady=3)
 
-        ttk.Label(opt_lf, text="错误处理策略:").grid(row=3, column=0, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(opt_lf, text=_("import.error_mode.label")).grid(row=3, column=0, sticky=tk.W, padx=8, pady=6)
         self.error_mode_var = tk.StringVar(value="skip")
-        ttk.Radiobutton(opt_lf, text="跳过错误行，继续导入（遇新错误类型提示用户）",
+        ttk.Radiobutton(opt_lf, text=_("import.error_mode.skip"),
                          variable=self.error_mode_var, value="skip").grid(
             row=3, column=1, columnspan=3, sticky=tk.W)
-        ttk.Radiobutton(opt_lf, text="遇到任何错误立即全部回滚",
+        ttk.Radiobutton(opt_lf, text=_("import.error_mode.rollback"),
                          variable=self.error_mode_var, value="rollback").grid(
             row=4, column=1, columnspan=3, sticky=tk.W, padx=6)
 
         # 操作按钮
         btn_row = ttk.Frame(f)
         btn_row.pack(fill=tk.X, padx=12, pady=6)
-        self.import_btn = ttk.Button(btn_row, text="开始导入", command=self._start_import)
+        self.import_btn = ttk.Button(btn_row, text=_("import.btn.start"), command=self._start_import)
         self.import_btn.pack(side=tk.LEFT, padx=4)
-        self.stop_btn = ttk.Button(btn_row, text="停止导入", command=self._stop_import_clicked,
+        self.stop_btn = ttk.Button(btn_row, text=_("import.btn.stop"), command=self._stop_import_clicked,
                                    state="disabled")
         self.stop_btn.pack(side=tk.LEFT, padx=4)
         self.import_status_var = tk.StringVar(value="")
@@ -2749,16 +2774,16 @@ class CSVImporterApp(tk.Tk):
         cnt = ttk.Frame(f)
         cnt.pack(fill=tk.X, padx=12)
         for label, attr, color in [
-            ("已导入:", "imported_var", "green"),
-            ("已跳过:", "skipped_var", "orange"),
-            ("错误:", "errors_var", "red"),
+            (_("import.cnt.imported"), "imported_var", "green"),
+            (_("import.cnt.skipped"), "skipped_var", "orange"),
+            (_("import.cnt.errors"), "errors_var", "red"),
         ]:
             ttk.Label(cnt, text=label).pack(side=tk.LEFT, padx=(16, 2))
             var = tk.StringVar(value="0")
             setattr(self, attr, var)
             ttk.Label(cnt, textvariable=var, foreground=color, width=10).pack(side=tk.LEFT)
 
-        ttk.Label(f, text="导入日志：").pack(anchor=tk.W, padx=12, pady=(8, 2))
+        ttk.Label(f, text=_("import.log.label")).pack(anchor=tk.W, padx=12, pady=(8, 2))
         self.imp_log = scrolledtext.ScrolledText(f, height=12, state=tk.DISABLED,
                                                   font=("Consolas", 9))
         self.imp_log.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
@@ -2766,16 +2791,16 @@ class CSVImporterApp(tk.Tk):
     def _start_import(self):
         table = self.table_name_var.get().strip()
         if not table:
-            messagebox.showwarning("提示", "请填写目标表名")
+            messagebox.showwarning(_("common.title.hint"), _("import.no_table"))
             return
         if not self.validation_result:
-            messagebox.showwarning("提示", "请先在【数据校验】页完成校验")
+            messagebox.showwarning(_("common.title.hint"), _("import.no_validate"))
             return
 
         db_cfg = self._get_ui_db_cfg()
 
         self._imp_log_clear()
-        self.import_status_var.set("导入中...")
+        self.import_status_var.set(_("import.status.running"))
         self.imp_pb["value"] = 0
         self.imported_var.set("0")
         self.skipped_var.set("0")
@@ -2808,10 +2833,10 @@ class CSVImporterApp(tk.Tk):
             db = DBConnection(db_cfg)
             db.connect()
         except Exception as e:
-            self._finish_import_error(f"数据库连接失败: {e}")
+            self._finish_import_error(_("import.err.connect", e=e))
             return
 
-        self._imp_log(f"连接数据库成功，目标表: {table}\n")
+        self._imp_log(_("import.log.connected", table=table))
 
         final_columns = list(columns)  # may be adjusted for column alignment
 
@@ -2819,7 +2844,7 @@ class CSVImporterApp(tk.Tk):
             # ── 表处理 ────────────────────────────────────────────────────────
             if db.table_exists(table):
                 if do_truncate:
-                    self._imp_log(f"清空表 {table}...\n")
+                    self._imp_log(_("import.log.truncate", table=table))
                     db.truncate_table(table)
 
                 existing_cols = db.get_table_columns(table)
@@ -2828,17 +2853,13 @@ class CSVImporterApp(tk.Tk):
                 if csv_set != tbl_set:
                     # 列不匹配，问用户是否对齐插入
                     answer = self._ask_from_thread(
-                        "列不匹配",
-                        f"表 [{table}] 已存在，但列与 CSV 不一致。\n"
-                        f"CSV 列: {columns}\n"
-                        f"表 列:  {existing_cols}\n\n"
-                        "选【是】：按列名对齐，只插入匹配的列\n"
-                        "选【否】：终止导入",
+                        _("import.col_mismatch.title"),
+                        _("import.col_mismatch.msg", table=table, csv_cols=columns, tbl_cols=existing_cols),
                     )
                     if not answer:
                         db.close()
                         self.after(0, lambda: (
-                            self.import_status_var.set("已取消"),
+                            self.import_status_var.set(_("import.status.cancelled")),
                             self.import_btn.configure(state="normal"),
                         ))
                         return
@@ -2848,19 +2869,17 @@ class CSVImporterApp(tk.Tk):
                     if not final_columns:
                         db.close()
                         self._finish_import_error(
-                            f"列对齐失败：CSV 列与表 [{table}] 的列没有任何交集，无法导入。\n"
-                            f"CSV 列: {columns}\n"
-                            f"表 列:  {existing_cols}"
+                            _("import.err.no_common_cols", table=table, csv_cols=columns, tbl_cols=existing_cols)
                         )
                         return
-                    self._imp_log(f"对齐后使用列: {final_columns}\n")
+                    self._imp_log(_("import.log.aligned", cols=final_columns))
             else:
                 if create_table:
-                    self._imp_log(f"建表 {table}，列: {columns}\n")
+                    self._imp_log(_("import.log.create", table=table, cols=columns))
                     db.create_table(table, columns)
                 else:
                     db.close()
-                    self._finish_import_error(f"表 [{table}] 不存在，请勾选'自动建表'选项")
+                    self._finish_import_error(_("import.err.no_table", table=table))
                     return
 
             # ── 构造 SQL ──────────────────────────────────────────────────────
@@ -2881,7 +2900,7 @@ class CSVImporterApp(tk.Tk):
                     vals_str = ", ".join(f"{k}={repr(v)}" for k, v in first_row.items())
                 else:
                     vals_str = ", ".join(repr(v) for v in first_row)
-                msg = f"[BATCH {batch_end}/{total_data}] SQL: {insert_sql}\n          首行值: ({vals_str})\n"
+                msg = _("import.log.batch_hdr", batch=batch_end, total=total_data, sql=insert_sql, vals=vals_str)
                 print(msg, flush=True)
                 self._imp_log(msg)
 
@@ -2904,7 +2923,7 @@ class CSVImporterApp(tk.Tk):
                         db.rollback()
                         db.close()
                         self._finish_import_error(
-                            f"第 {lineno} 行列数不符（期望 {std_cols}，实际 {len(row)}），已全部回滚"
+                            _("import.err.col_mismatch_row", lineno=lineno, std_cols=std_cols, col_cnt=len(row))
                         )
                         return
                     else:
@@ -2924,7 +2943,7 @@ class CSVImporterApp(tk.Tk):
                         except Exception as e:
                             db.rollback()
                             db.close()
-                            self._finish_import_error(f"写入失败，已全部回滚\n行 {lineno}: {e}")
+                            self._finish_import_error(_("import.err.write_fail", lineno=lineno, e=e))
                             return
                 else:  # skip
                     try:
@@ -2939,21 +2958,17 @@ class CSVImporterApp(tk.Tk):
                         self.logger.error(f"行 {lineno} 写入失败 [{etype}]: {e}")
                         if etype not in self.ignored_error_types:
                             ignore = self._ask_from_thread(
-                                "写入错误",
-                                f"第 {lineno} 行写入失败\n"
-                                f"错误类型: {etype}\n"
-                                f"错误信息: {e}\n\n"
-                                "选【是】：忽略此类错误并继续（后续同类错误不再提示）\n"
-                                "选【否】：终止导入",
+                                _("import.write_err.title"),
+                                _("import.write_err.msg", lineno=lineno, etype=etype, e=e),
                             )
                             if ignore:
                                 self.ignored_error_types.add(etype)
-                                self._imp_log(f"[已设置忽略错误类型: {etype}]\n")
+                                self._imp_log(_("import.log.ignore_type", etype=etype))
                             else:
                                 db.commit()
                                 db.close()
                                 self.after(0, lambda: (
-                                    self.import_status_var.set("已终止"),
+                                    self.import_status_var.set(_("import.status.terminated")),
                                     self.import_btn.configure(state="normal"),
                                 ))
                                 return
@@ -2979,14 +2994,14 @@ class CSVImporterApp(tk.Tk):
                 except Exception as e:
                     db.rollback()
                     db.close()
-                    self._finish_import_error(f"写入失败，已全部回滚: {e}")
+                    self._finish_import_error(_("import.err.write_fail_all", e=e))
                     return
 
             if error_mode == "skip":
                 db.commit()
 
             db.close()
-            msg = f"导入完成：成功 {imported} 行，跳过 {skipped} 行，错误 {errors} 行"
+            msg = _("import.status.done", imported=imported, skipped=skipped, errors=errors)
             self.logger.info(msg)
             self.after(0, lambda: self._on_import_done(imported, skipped, errors, msg))
 
@@ -2997,7 +3012,7 @@ class CSVImporterApp(tk.Tk):
     def _stop_import_clicked(self):
         self._stop_import.set()
         self.stop_btn.configure(state="disabled")
-        self.import_status_var.set("正在停止，请稍候...")
+        self.import_status_var.set(_("import.status.stopping"))
 
     def _ask_from_thread(self, title: str, msg: str) -> bool:
         """在后台线程中安全地弹出 Yes/No 对话框，阻塞直到用户回应。"""
@@ -3016,13 +3031,13 @@ class CSVImporterApp(tk.Tk):
         self.imported_var.set(str(imported))
         self.skipped_var.set(str(skipped))
         self.errors_var.set(str(errors))
-        self.import_status_var.set(f"已停止（已提交 {imported} 行，未提交部分已回滚）")
+        self.import_status_var.set(_("import.status.stopped", n=imported))
         self.import_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        msg = f"导入已停止：已成功提交 {imported} 行，停止前未提交的数据已回滚"
+        msg = _("import.stopped.msg", n=imported)
         self.logger.info(msg)
-        self._imp_log(f"\n{'='*60}\n{msg}\n")
-        messagebox.showwarning("已停止", msg)
+        self._imp_log(_("import.log.stopped", sep="="*60, msg=msg))
+        messagebox.showwarning(_("import.stopped.title"), msg)
 
     def _update_imp_progress(self, pct, imported, skipped, errors):
         self.imp_pb["value"] = pct
@@ -3038,14 +3053,14 @@ class CSVImporterApp(tk.Tk):
         self.import_status_var.set(msg)
         self.import_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        self._imp_log(f"\n{'='*60}\n{msg}\n日志文件: {self.log_path}\n")
-        messagebox.showinfo("导入完成", msg)
+        self._imp_log(_("import.log.done", sep="="*60, msg=msg, log_path=self.log_path))
+        messagebox.showinfo(_("import.done.title"), msg)
 
     def _finish_import_error(self, msg: str):
         self.logger.error(msg)
         self.after(0, lambda: (
-            messagebox.showerror("导入失败", msg),
-            self.import_status_var.set("导入失败"),
+            messagebox.showerror(_("import.fail.title"), msg),
+            self.import_status_var.set(_("import.status.fail")),
             self.import_btn.configure(state="normal"),
             self.stop_btn.configure(state="disabled"),
         ))
@@ -3384,7 +3399,7 @@ class CSVImporterApp(tk.Tk):
         self.export_stop_btn.configure(state="normal")
         self.export_pb["value"] = 0
         self._export_log_clear()
-        self.export_status_var.set("准备导出...")
+        self.export_status_var.set(_("export.status.preparing"))
 
         threading.Thread(
             target=self._do_export,
@@ -3395,7 +3410,7 @@ class CSVImporterApp(tk.Tk):
     def _stop_export_clicked(self):
         self._stop_export.set()
         self.export_stop_btn.configure(state="disabled")
-        self.export_status_var.set("正在停止...")
+        self.export_status_var.set(_("export.status.stopping"))
 
     def _do_export(self, col_config, output_dir, prefix, fmt, include_header, split, recs_per_file, engine="openpyxl"):
         import itertools, re as _re, time as _time
@@ -3610,9 +3625,9 @@ class CSVImporterApp(tk.Tk):
                     fpath, cnt = _write_chunk(_tracked(chunk_rows))
                     file_count += 1
                     file_idx += 1
-                    self._export_log_write(f"已写入: {fpath}  （{cnt:,} 条）\n")
+                    self._export_log_write(_("export.log.written", path=fpath, cnt=cnt))
             else:
-                # 全量：单文件流式写入
+                # stream all rows to single file
                 def _tracked_all():
                     nonlocal processed
                     for row in data_gen:
@@ -3625,7 +3640,7 @@ class CSVImporterApp(tk.Tk):
 
                 fpath, cnt = _write_chunk(_tracked_all())
                 file_count = 1
-                self._export_log_write(f"已写入: {fpath}  （{cnt:,} 条）\n")
+                self._export_log_write(_("export.log.written", path=fpath, cnt=cnt))
 
             if db:
                 db.close()
@@ -3647,10 +3662,10 @@ class CSVImporterApp(tk.Tk):
             import traceback
             err = str(e)
             tb = traceback.format_exc()
-            self._export_log_write(f"\n[导出异常]\n{tb}\n")
-            self.logger.error(f"导出失败: {tb}")
+            self._export_log_write(_("export.err.exception", tb=tb))
+            self.logger.error(f"export error: {tb}")
             self.after(0, lambda: (
-                self.export_status_var.set(f"错误: {err}"),
+                self.export_status_var.set(_("export.err.msg", err=err)),
                 self.export_btn.configure(state="normal"),
                 self.export_stop_btn.configure(state="disabled"),
             ))
