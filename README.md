@@ -1,8 +1,8 @@
-# DB Importer
+# LargeFileConverter
 
 专为**大文件**设计的数据导入 / 导出工具，提供图形界面（GUI）和命令行工具（CLI）。
 
-无需将大文件用文本编辑器打开（大文件会导致编辑器卡死或崩溃）——DB Importer 全程流式处理，内存占用恒定，轻松应对 **10 GB+、千万行级** 数据文件。
+无需将大文件用文本编辑器打开（大文件会导致编辑器卡死或崩溃）——LargeFileConverter 全程流式处理，内存占用恒定，轻松应对 **10 GB+、千万行级** 数据文件。
 
 ---
 
@@ -61,8 +61,8 @@
 ## 安装
 
 ```bash
-git clone https://github.com/your-username/DB_importer.git
-cd DB_importer
+git clone https://github.com/your-username/LargeFileConverter.git
+cd LargeFileConverter
 
 pip install -r requirements.txt
 ```
@@ -146,7 +146,7 @@ build_exe.bat
 ## 目录结构
 
 ```
-DB_importer/
+LargeFileConverter/
 ├── csv_importer.py        # 主程序（GUI）
 ├── file_utils.py          # 文件工具库（被主程序和 CLI 共同依赖）
 ├── peek_file.py           # CLI：查看文件头尾

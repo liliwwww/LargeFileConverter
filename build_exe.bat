@@ -4,7 +4,7 @@ setlocal EnableDelayedExpansion
 
 echo.
 echo ================================================
-echo   DB Importer - Build EXE
+echo   LargeFileConverter - Build EXE
 echo ================================================
 echo.
 
@@ -77,26 +77,26 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "dist\DB_Importer.exe" (
-    echo [ERROR] dist\DB_Importer.exe not found after build.
+if not exist "dist\LargeFileConverter.exe" (
+    echo [ERROR] dist\LargeFileConverter.exe not found after build.
     pause
     exit /b 1
 )
-echo [OK] dist\DB_Importer.exe built successfully.
+echo [OK] dist\LargeFileConverter.exe built successfully.
 
 :: ---- Step 4: Assemble release package --------------------------------------
 echo.
 echo [4/4] Assembling release package...
 
-set RELEASE_DIR=dist\DB_Importer_release
+set RELEASE_DIR=dist\LargeFileConverter_release
 if exist "%RELEASE_DIR%" rmdir /s /q "%RELEASE_DIR%"
 mkdir "%RELEASE_DIR%"
 mkdir "%RELEASE_DIR%\data"
 mkdir "%RELEASE_DIR%\logs"
 
 :: Main EXE
-copy /y "dist\DB_Importer.exe" "%RELEASE_DIR%\" >nul
-echo [+] DB_Importer.exe
+copy /y "dist\LargeFileConverter.exe" "%RELEASE_DIR%\" >nul
+echo [+] LargeFileConverter.exe
 
 :: Default configs (db_config.json, ui_state.json, data/default.db)
 :: These go next to the EXE so the app finds them on first launch
@@ -121,7 +121,7 @@ if "!HAS_OCI!"=="0" (
 for /f "tokens=1-3 delims=/-" %%a in ("%date%") do (
     set DATESTAMP=%%a%%b%%c
 )
-set ZIP_PATH=dist\DB_Importer_!DATESTAMP!.zip
+set ZIP_PATH=dist\LargeFileConverter_!DATESTAMP!.zip
 
 powershell -NoProfile -Command "Compress-Archive -Path '%RELEASE_DIR%\*' -DestinationPath '!ZIP_PATH!' -Force"
 if exist "!ZIP_PATH!" (
@@ -139,19 +139,19 @@ echo   Release folder : %RELEASE_DIR%\
 echo   Release ZIP    : !ZIP_PATH!
 echo.
 echo   Contents:
-echo     DB_Importer.exe   main app (multilingual, no Python needed)
-echo     db_config.json    pre-configured with default SQLite connection
-echo     ui_state.json     default language: zh_CN
-echo     data\default.db   empty SQLite database (ready to use)
-echo     logs\             log output directory
+echo     LargeFileConverter.exe   main app (multilingual, no Python needed)
+echo     db_config.json           pre-configured with default SQLite connection
+echo     ui_state.json            default language: zh_CN
+echo     data\default.db          empty SQLite database (ready to use)
+echo     logs\                    log output directory
 if "!HAS_OCI!"=="1" (
-echo     instantclient\    Oracle Thick mode client
+echo     instantclient\           Oracle Thick mode client
 )
 echo.
 echo   SQLite: works out of the box, no server needed.
 echo   MySQL / Oracle: requires a running database server.
 echo.
-echo   Share the ZIP. Users unzip and double-click DB_Importer.exe.
+echo   Share the ZIP. Users unzip and double-click LargeFileConverter.exe.
 echo ================================================
 echo.
 

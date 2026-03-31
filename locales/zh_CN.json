@@ -79,7 +79,7 @@
   "info.tab.title":         "关于 / 设置",
   "info.lang.label":        "界面语言:",
   "info.lang.restart_hint": "切换语言后，请重启程序以完全生效。",
-  "info.app.name":          "DB Importer",
+  "info.app.name":          "LargeFileConverter",
   "info.app.desc":          "大文件 CSV 导入 / 导出工具",
   "info.app.support":       "支持 SQLite / MySQL / Oracle",
   "info.app.license":       "License: MIT"

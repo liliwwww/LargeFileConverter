@@ -56,7 +56,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='DB_Importer',
+    name='LargeFileConverter',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

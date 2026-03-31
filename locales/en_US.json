@@ -79,7 +79,7 @@
   "info.tab.title":         "About / Settings",
   "info.lang.label":        "Language:",
   "info.lang.restart_hint": "Restart the application for the language change to take full effect.",
-  "info.app.name":          "DB Importer",
+  "info.app.name":          "LargeFileConverter",
   "info.app.desc":          "Large-file CSV import / export tool",
   "info.app.support":       "Supports SQLite / MySQL / Oracle",
   "info.app.license":       "License: MIT"

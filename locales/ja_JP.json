@@ -79,7 +79,7 @@
   "info.tab.title":         "情報 / 設定",
   "info.lang.label":        "言語:",
   "info.lang.restart_hint": "言語を変更したら、アプリを再起動してください。",
-  "info.app.name":          "DB Importer",
+  "info.app.name":          "LargeFileConverter",
   "info.app.desc":          "大容量 CSV インポート / エクスポートツール",
   "info.app.support":       "SQLite / MySQL / Oracle 対応",
   "info.app.license":       "License: MIT"
