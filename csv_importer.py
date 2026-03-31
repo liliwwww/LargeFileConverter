@@ -17,6 +17,8 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
+from i18n import _, set_lang, current_lang, available_langs, LANG_LABELS
+
 # ── 可选依赖 ──────────────────────────────────────────────────────────────────
 try:
     import mysql.connector
@@ -130,6 +132,11 @@ def _save_ui_state(state: dict):
             json.dump(existing, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+# 启动时恢复上次选择的语言
+_saved_lang = _load_ui_state().get("lang", "zh_CN")
+set_lang(_saved_lang)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -766,6 +773,7 @@ class CSVImporterApp(tk.Tk):
         self._build_validate_tab()
         self._build_import_tab()
         self._build_export_tab()
+        self._build_info_tab()
 
     # ══════════════════════════════════════════════════════════════════════════
     # Tab 1 — 数据库连接
@@ -3057,7 +3065,7 @@ class CSVImporterApp(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
     def _build_export_tab(self):
         outer = ttk.Frame(self.nb)
-        self.nb.add(outer, text="  数据导出  ")
+        self.nb.add(outer, text=_("tab.export"))
 
         # 滚动容器
         canvas = tk.Canvas(outer, highlightthickness=0)
@@ -3075,83 +3083,83 @@ class CSVImporterApp(tk.Tk):
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
         # ── 数据来源 ──────────────────────────────────────────────────────────
-        src_lf = ttk.LabelFrame(f, text="数据来源")
+        src_lf = ttk.LabelFrame(f, text=_("export.src.label"))
         src_lf.pack(fill=tk.X, padx=12, pady=(10, 4))
 
         src_row = ttk.Frame(src_lf)
         src_row.pack(fill=tk.X, padx=8, pady=6)
-        ttk.Radiobutton(src_row, text="已校验文件（Tab3 校验通过的行）",
+        ttk.Radiobutton(src_row, text=_("export.src.file"),
                         variable=self._export_source_var, value="file",
                         command=self._on_export_source_change).pack(side=tk.LEFT)
-        ttk.Radiobutton(src_row, text="SQL 查询",
+        ttk.Radiobutton(src_row, text=_("export.src.sql"),
                         variable=self._export_source_var, value="sql",
                         command=self._on_export_source_change).pack(side=tk.LEFT, padx=16)
 
         self._sql_input_frame = ttk.Frame(src_lf)
         self._sql_input_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
         ttk.Label(self._sql_input_frame,
-                  text="SELECT 语句（使用 Tab1 的数据库连接）:").pack(anchor=tk.W)
+                  text=_("export.src.sql_hint")).pack(anchor=tk.W)
         self.export_sql_text = scrolledtext.ScrolledText(
             self._sql_input_frame, height=3, font=("Consolas", 9), wrap=tk.NONE)
         self.export_sql_text.pack(fill=tk.X, pady=(2, 0))
         self._sql_input_frame.pack_forget()
 
         # ── 导出配置 ──────────────────────────────────────────────────────────
-        cfg_lf = ttk.LabelFrame(f, text="导出配置")
+        cfg_lf = ttk.LabelFrame(f, text=_("export.cfg.label"))
         cfg_lf.pack(fill=tk.X, padx=12, pady=4)
 
         row1 = ttk.Frame(cfg_lf)
         row1.pack(fill=tk.X, padx=8, pady=6)
-        ttk.Label(row1, text="格式:").pack(side=tk.LEFT)
+        ttk.Label(row1, text=_("export.cfg.format")).pack(side=tk.LEFT)
         ttk.Radiobutton(row1, text="CSV", variable=self._export_format_var,
                         value="csv", command=self._on_export_format_change).pack(side=tk.LEFT, padx=4)
         ttk.Radiobutton(row1, text="Excel (.xlsx)", variable=self._export_format_var,
                         value="excel", command=self._on_export_format_change).pack(side=tk.LEFT, padx=4)
-        ttk.Checkbutton(row1, text="包含表头",
+        ttk.Checkbutton(row1, text=_("export.cfg.include_hdr"),
                         variable=self._export_include_header_var).pack(side=tk.LEFT, padx=20)
 
         # Excel 引擎选择行（仅 Excel 格式时可见）
         self._engine_row = ttk.Frame(cfg_lf)
-        ttk.Label(self._engine_row, text="Excel 引擎:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(self._engine_row, text=_("export.cfg.engine")).pack(side=tk.LEFT, padx=(0, 6))
         if HAS_XLSXWRITER:
-            hint = "（高速，推荐）" if not HAS_OPENPYXL else "（高速）"
+            hint = _("export.cfg.engine_fast") if not HAS_OPENPYXL else _("export.cfg.engine_fast2")
             ttk.Radiobutton(self._engine_row, text=f"xlsxwriter {hint}",
                             variable=self._excel_engine_var,
                             value="xlsxwriter").pack(side=tk.LEFT)
         if HAS_OPENPYXL:
-            hint = "（兼容）" if HAS_XLSXWRITER else "（默认）"
+            hint = _("export.cfg.engine_compat") if HAS_XLSXWRITER else _("export.cfg.engine_default")
             ttk.Radiobutton(self._engine_row, text=f"openpyxl {hint}",
                             variable=self._excel_engine_var,
                             value="openpyxl").pack(side=tk.LEFT, padx=(8, 0))
         if not HAS_XLSXWRITER and not HAS_OPENPYXL:
-            ttk.Label(self._engine_row, text="⚠ 未安装 xlsxwriter 或 openpyxl，无法导出 Excel",
+            ttk.Label(self._engine_row, text=_("export.cfg.engine_none"),
                       foreground="red").pack(side=tk.LEFT)
         self._engine_row.pack_forget()  # 默认隐藏（CSV 模式）
 
         row2 = ttk.Frame(cfg_lf)
         row2.pack(fill=tk.X, padx=8, pady=(0, 6))
-        ttk.Label(row2, text="输出目录:").pack(side=tk.LEFT)
+        ttk.Label(row2, text=_("export.cfg.outdir")).pack(side=tk.LEFT)
         self.export_dir_var = tk.StringVar(value=_load_ui_state().get("last_export_dir", APP_DIR))
         ttk.Entry(row2, textvariable=self.export_dir_var, width=42).pack(side=tk.LEFT, padx=4)
-        ttk.Button(row2, text="浏览...", command=self._browse_export_dir).pack(side=tk.LEFT)
-        ttk.Label(row2, text="  文件名前缀:").pack(side=tk.LEFT, padx=(12, 2))
+        ttk.Button(row2, text=_("export.cfg.browse"), command=self._browse_export_dir).pack(side=tk.LEFT)
+        ttk.Label(row2, text=_("export.cfg.prefix")).pack(side=tk.LEFT, padx=(12, 2))
         self.export_prefix_var = tk.StringVar(value="export")
         ttk.Entry(row2, textvariable=self.export_prefix_var, width=14).pack(side=tk.LEFT)
 
         # ── 列配置 ────────────────────────────────────────────────────────────
-        col_lf = ttk.LabelFrame(f, text='列配置（单击"包含"列切换，双击"导出列名"列可重命名）')
+        col_lf = ttk.LabelFrame(f, text=_("export.col.label"))
         col_lf.pack(fill=tk.X, padx=12, pady=4)
 
         col_ctrl = ttk.Frame(col_lf)
         col_ctrl.pack(fill=tk.X, padx=8, pady=6)
-        ttk.Button(col_ctrl, text="加载/刷新列",
+        ttk.Button(col_ctrl, text=_("export.col.load"),
                    command=self._load_export_columns).pack(side=tk.LEFT)
         self.export_col_info_var = tk.StringVar(value="")
         ttk.Label(col_ctrl, textvariable=self.export_col_info_var,
                   foreground="blue").pack(side=tk.LEFT, padx=12)
-        ttk.Button(col_ctrl, text="全选",
+        ttk.Button(col_ctrl, text=_("export.col.select_all"),
                    command=lambda: self._set_all_export_cols("✓")).pack(side=tk.LEFT, padx=4)
-        ttk.Button(col_ctrl, text="全不选",
+        ttk.Button(col_ctrl, text=_("export.col.select_none"),
                    command=lambda: self._set_all_export_cols("☐")).pack(side=tk.LEFT, padx=2)
 
         col_tree_frm = ttk.Frame(col_lf)
@@ -3161,9 +3169,9 @@ class CSVImporterApp(tk.Tk):
                                      show="headings", height=6, selectmode="browse")
         col_vsb = ttk.Scrollbar(col_tree_frm, orient=tk.VERTICAL, command=self.col_tree.yview)
         self.col_tree.configure(yscrollcommand=col_vsb.set)
-        self.col_tree.heading("include", text="包含")
-        self.col_tree.heading("orig", text="原始列名")
-        self.col_tree.heading("export", text="导出列名")
+        self.col_tree.heading("include", text=_("export.col.hdr_include"))
+        self.col_tree.heading("orig",    text=_("export.col.hdr_orig"))
+        self.col_tree.heading("export",  text=_("export.col.hdr_export"))
         self.col_tree.column("include", width=50, minwidth=50, stretch=False, anchor=tk.CENTER)
         self.col_tree.column("orig", width=200, stretch=True)
         self.col_tree.column("export", width=200, stretch=True)
@@ -3173,21 +3181,21 @@ class CSVImporterApp(tk.Tk):
         self.col_tree.bind("<Double-1>", self._on_col_double_click)
 
         # ── 导出方式 ──────────────────────────────────────────────────────────
-        way_lf = ttk.LabelFrame(f, text="导出方式")
+        way_lf = ttk.LabelFrame(f, text=_("export.way.label"))
         way_lf.pack(fill=tk.X, padx=12, pady=4)
 
         way_row = ttk.Frame(way_lf)
         way_row.pack(fill=tk.X, padx=8, pady=6)
-        ttk.Radiobutton(way_row, text="全部导出（单个文件）",
+        ttk.Radiobutton(way_row, text=_("export.way.all"),
                         variable=self._export_split_var, value="all",
                         command=self._on_export_split_change).pack(side=tk.LEFT)
-        ttk.Radiobutton(way_row, text="分文件导出",
+        ttk.Radiobutton(way_row, text=_("export.way.split"),
                         variable=self._export_split_var, value="split",
                         command=self._on_export_split_change).pack(side=tk.LEFT, padx=16)
 
         self._split_cfg_frame = ttk.Frame(way_lf)
         self._split_cfg_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
-        ttk.Label(self._split_cfg_frame, text="每文件记录数:").pack(side=tk.LEFT)
+        ttk.Label(self._split_cfg_frame, text=_("export.way.recs")).pack(side=tk.LEFT)
         ttk.Entry(self._split_cfg_frame, textvariable=self._export_records_per_file_var,
                   width=10).pack(side=tk.LEFT, padx=4)
         self._split_cfg_frame.pack_forget()
@@ -3195,9 +3203,9 @@ class CSVImporterApp(tk.Tk):
         # ── 执行区 ────────────────────────────────────────────────────────────
         btn_frm = ttk.Frame(f)
         btn_frm.pack(fill=tk.X, padx=12, pady=6)
-        self.export_btn = ttk.Button(btn_frm, text="开始导出", command=self._start_export)
+        self.export_btn = ttk.Button(btn_frm, text=_("export.btn.start"), command=self._start_export)
         self.export_btn.pack(side=tk.LEFT, padx=4)
-        self.export_stop_btn = ttk.Button(btn_frm, text="停止",
+        self.export_stop_btn = ttk.Button(btn_frm, text=_("export.btn.stop"),
                                           command=self._stop_export_clicked,
                                           state="disabled")
         self.export_stop_btn.pack(side=tk.LEFT, padx=4)
@@ -3207,7 +3215,7 @@ class CSVImporterApp(tk.Tk):
         self.export_pb = ttk.Progressbar(f, mode="determinate")
         self.export_pb.pack(fill=tk.X, padx=12, pady=4)
 
-        ttk.Label(f, text="导出日志：").pack(anchor=tk.W, padx=12, pady=(4, 2))
+        ttk.Label(f, text=_("export.log.label")).pack(anchor=tk.W, padx=12, pady=(4, 2))
         self.export_log = scrolledtext.ScrolledText(
             f, height=7, state=tk.DISABLED, font=("Consolas", 9))
         self.export_log.pack(fill=tk.BOTH, padx=12, pady=(0, 10))
@@ -3233,7 +3241,7 @@ class CSVImporterApp(tk.Tk):
             self._split_cfg_frame.pack_forget()
 
     def _browse_export_dir(self):
-        d = filedialog.askdirectory(title="选择输出目录")
+        d = filedialog.askdirectory(title=_("export.cfg.outdir").rstrip(":"))
         if d:
             self.export_dir_var.set(d)
             _save_ui_state({"last_export_dir": d})
@@ -3243,19 +3251,18 @@ class CSVImporterApp(tk.Tk):
         if source == "file":
             vr = self.validation_result
             if not vr:
-                messagebox.showwarning("提示", "请先在【数据校验】中完成校验")
+                messagebox.showwarning(_("export.warn.title"), _("export.warn.no_validate"))
                 return
             columns    = vr["columns"]
             total_data = vr["data_count"]
             inv_count  = len(vr["invalid"])
             valid_count = total_data - inv_count
             self.export_col_info_var.set(
-                f"共 {valid_count:,} 条有效记录（数据行 {total_data:,} 行，"
-                f"含 {inv_count:,} 条异常）")
+                _("export.col_info_valid", valid=valid_count, total=total_data, inv=inv_count))
         else:
             sql = self.export_sql_text.get("1.0", tk.END).strip()
             if not sql:
-                messagebox.showwarning("提示", "请输入 SELECT 语句")
+                messagebox.showwarning(_("export.warn.title"), _("export.warn.no_sql_text"))
                 return
             try:
                 db = DBConnection(self._get_ui_db_cfg())
@@ -3268,9 +3275,9 @@ class CSVImporterApp(tk.Tk):
                 db.close()
                 self._sql_export_sql = sql
                 self._sql_export_columns = columns
-                self.export_col_info_var.set(f"{len(columns)} 列（导出时流式读取，行数未统计）")
+                self.export_col_info_var.set(_("export.col_info_sql", cols=len(columns)))
             except Exception as e:
-                messagebox.showerror("SQL 错误", str(e))
+                messagebox.showerror(_("export.err.sql"), str(e))
                 return
 
         for item_id in self.col_tree.get_children():
@@ -3329,12 +3336,12 @@ class CSVImporterApp(tk.Tk):
     def _start_export(self):
         col_config = self._get_export_col_config()
         if not col_config:
-            messagebox.showwarning("提示", "请先点击【加载/刷新列】并至少选择一列")
+            messagebox.showwarning(_("export.warn.title"), _("export.warn.no_col"))
             return
 
         output_dir = self.export_dir_var.get().strip()
         if not output_dir or not os.path.isdir(output_dir):
-            messagebox.showwarning("提示", "请选择有效的输出目录")
+            messagebox.showwarning(_("export.warn.title"), _("export.warn.no_dir"))
             return
 
         prefix = self.export_prefix_var.get().strip() or "export"
@@ -3351,24 +3358,21 @@ class CSVImporterApp(tk.Tk):
         engine = self._excel_engine_var.get()
         if fmt == "excel":
             if engine == "xlsxwriter" and not HAS_XLSXWRITER:
-                messagebox.showerror("缺少依赖", "xlsxwriter 未安装：\npip install xlsxwriter")
+                messagebox.showerror(_("export.err.title"), _("export.err.no_xlsxwriter"))
                 return
             if engine == "openpyxl" and not HAS_OPENPYXL:
-                messagebox.showerror("缺少依赖", "openpyxl 未安装：\npip install openpyxl")
+                messagebox.showerror(_("export.err.title"), _("export.err.no_openpyxl"))
                 return
             if not engine:
-                messagebox.showerror("缺少依赖",
-                    "Excel 导出需要 xlsxwriter 或 openpyxl，请安装其中一个：\n"
-                    "  pip install xlsxwriter   （推荐，速度快）\n"
-                    "  pip install openpyxl     （兼容性好）")
+                messagebox.showerror(_("export.err.title"), _("export.err.no_engine"))
                 return
 
         source = self._export_source_var.get()
         if source == "file" and not self.validation_result:
-            messagebox.showwarning("提示", "请先在【数据校验】中完成校验")
+            messagebox.showwarning(_("export.warn.title"), _("export.warn.no_validate"))
             return
         if source == "sql" and not hasattr(self, "_sql_export_sql"):
-            messagebox.showwarning("提示", "请先点击【加载/刷新列】执行 SQL 查询")
+            messagebox.showwarning(_("export.warn.title"), _("export.warn.no_sql"))
             return
 
         self._stop_export.clear()
@@ -3426,13 +3430,14 @@ class CSVImporterApp(tk.Tk):
             export_headers = [exp for _, exp in col_config]
             db = None
 
-            _log(f"=== 导出开始 ===")
-            _log(f"数据源  : {source}")
-            _log(f"格式    : {fmt}  引擎: {engine if fmt != 'csv' else 'N/A'}")
-            _log(f"输出目录: {output_dir}")
-            _log(f"文件前缀: {prefix}")
-            _log(f"分片    : {'是，每片 ' + str(recs_per_file) + ' 条' if split else '否'}")
-            _log(f"导出列  : {export_headers}")
+            _log(_("export.log.start"))
+            _log(_("export.log.source", src=source))
+            _log(_("export.log.fmt", fmt=fmt, engine=engine if fmt != 'csv' else 'N/A'))
+            _log(_("export.log.outdir", path=output_dir))
+            _log(_("export.log.prefix", prefix=prefix))
+            split_mode = _("export.log.split_yes", n=recs_per_file) if split else _("export.log.split_no")
+            _log(_("export.log.split", mode=split_mode))
+            _log(_("export.log.cols", cols=export_headers))
 
             # ── 准备流式数据源 ──────────────────────────────────────────────────
             if source == "file":
@@ -3495,9 +3500,10 @@ class CSVImporterApp(tk.Tk):
                     self.after(0, lambda p=pct: self.export_pb.configure(value=p))
                 elapsed = _time.time() - t0
                 speed   = int(processed / elapsed) if elapsed > 0 else 0
-                msg = f"已导出 {processed:,} 条  {speed:,} 条/秒"
                 if total:
-                    msg = f"已导出 {processed:,} / {total:,} 条  {speed:,} 条/秒"
+                    msg = _("export.progress", done=processed, total=total, speed=speed)
+                else:
+                    msg = _("export.progress_nototal", done=processed, speed=speed)
                 self.after(0, lambda m=msg: self.export_status_var.set(m))
                 exp_logger.info(msg)
 
@@ -3508,7 +3514,7 @@ class CSVImporterApp(tk.Tk):
                 if fmt == "csv":
                     fname = f"{prefix}{suffix}.csv"
                     fpath = os.path.join(output_dir, fname)
-                    _log(f"开始写入: {fpath}")
+                    _log(_("export.log.file_start", path=fpath))
                     with open(fpath, "w", encoding="utf-8-sig", newline="") as fh:
                         writer = csv.writer(fh)
                         if include_header:
@@ -3518,14 +3524,14 @@ class CSVImporterApp(tk.Tk):
                             writer.writerow(row)
                             cnt += 1
                     elapsed_c = _time.time() - t_chunk
-                    _log(f"完成写入: {fpath}  {cnt:,} 条  耗时 {elapsed_c:.1f}s  "
-                         f"速度 {int(cnt/elapsed_c) if elapsed_c>0 else 0:,} 条/秒")
+                    _log(_("export.log.file_done", path=fpath, cnt=cnt, elapsed=elapsed_c,
+                            speed=int(cnt/elapsed_c) if elapsed_c > 0 else 0))
                     return fpath, cnt
                 elif engine == "xlsxwriter":
                     import xlsxwriter
                     fname = f"{prefix}{suffix}.xlsx"
                     fpath = os.path.join(output_dir, fname)
-                    _log(f"开始写入: {fpath}")
+                    _log(_("export.log.file_start", path=fpath))
                     wb = xlsxwriter.Workbook(fpath, {'constant_memory': True, 'use_zip64': True})
                     ws = wb.add_worksheet("Sheet1")
                     row_idx = 0
@@ -3539,15 +3545,16 @@ class CSVImporterApp(tk.Tk):
                         row_idx += 1
                         cnt += 1
                     t_after_write = _time.time()
-                    _log(f"  [xlsxwriter] write_row 阶段: {cnt:,} 条  "
-                         f"耗时 {t_after_write - t_write:.1f}s  "
-                         f"速度 {int(cnt/(t_after_write-t_write)) if t_after_write>t_write else 0:,} 条/秒")
+                    _log(_("export.log.write_row", engine="xlsxwriter", cnt=cnt,
+                            elapsed=t_after_write - t_write,
+                            speed=int(cnt/(t_after_write-t_write)) if t_after_write > t_write else 0))
                     wb.close()
                     t_after_close = _time.time()
-                    _log(f"  [xlsxwriter] close/ZIP 阶段: 耗时 {t_after_close - t_after_write:.1f}s")
+                    _log(_("export.log.close_zip", engine="xlsxwriter",
+                            elapsed=t_after_close - t_after_write))
                     elapsed_c = t_after_close - t_chunk
-                    _log(f"完成写入: {fpath}  {cnt:,} 条  总耗时 {elapsed_c:.1f}s  "
-                         f"综合速度 {int(cnt/elapsed_c) if elapsed_c>0 else 0:,} 条/秒")
+                    _log(_("export.log.file_done", path=fpath, cnt=cnt, elapsed=elapsed_c,
+                            speed=int(cnt/elapsed_c) if elapsed_c > 0 else 0))
                     return fpath, cnt
                 else:  # openpyxl
                     import openpyxl
@@ -3556,8 +3563,9 @@ class CSVImporterApp(tk.Tk):
                     ws = wb.create_sheet("Sheet1")
                     fname = f"{prefix}{suffix}.xlsx"
                     fpath = os.path.join(output_dir, fname)
-                    _log(f"开始写入: {fpath}")
-                    _log(f"  [openpyxl] Workbook 初始化: 耗时 {_time.time()-t_open:.3f}s")
+                    _log(_("export.log.file_start", path=fpath))
+                    _log(_("export.log.wb_init", engine="openpyxl",
+                            elapsed=_time.time() - t_open))
                     if include_header:
                         ws.append(export_headers)
                     cnt = 0
@@ -3566,15 +3574,16 @@ class CSVImporterApp(tk.Tk):
                         ws.append(_sanitize_row(row))
                         cnt += 1
                     t_after_append = _time.time()
-                    _log(f"  [openpyxl] append 阶段: {cnt:,} 条  "
-                         f"耗时 {t_after_append - t_append:.1f}s  "
-                         f"速度 {int(cnt/(t_after_append-t_append)) if t_after_append>t_append else 0:,} 条/秒")
+                    _log(_("export.log.append", engine="openpyxl", cnt=cnt,
+                            elapsed=t_after_append - t_append,
+                            speed=int(cnt/(t_after_append-t_append)) if t_after_append > t_append else 0))
                     wb.save(fpath)
                     t_after_save = _time.time()
-                    _log(f"  [openpyxl] save/ZIP 阶段: 耗时 {t_after_save - t_after_append:.1f}s")
+                    _log(_("export.log.save_zip", engine="openpyxl",
+                            elapsed=t_after_save - t_after_append))
                     elapsed_c = t_after_save - t_chunk
-                    _log(f"完成写入: {fpath}  {cnt:,} 条  总耗时 {elapsed_c:.1f}s  "
-                         f"综合速度 {int(cnt/elapsed_c) if elapsed_c>0 else 0:,} 条/秒")
+                    _log(_("export.log.file_done", path=fpath, cnt=cnt, elapsed=elapsed_c,
+                            speed=int(cnt/elapsed_c) if elapsed_c > 0 else 0))
                     return fpath, cnt
 
             if split:
@@ -3618,10 +3627,10 @@ class CSVImporterApp(tk.Tk):
                 db.close()
 
             if self._stop_export.is_set():
-                msg = f"已停止，已处理 {processed:,} 条，{file_count} 个文件"
+                msg = _("export.stopped", done=processed, files=file_count)
             else:
-                total_str = f"{total:,}" if total else f"{processed:,}"
-                msg = f"导出完成，共 {total_str} 条记录，{file_count} 个文件"
+                total_val = total if total else processed
+                msg = _("export.done", total=f"{total_val:,}", files=file_count)
 
             self.after(0, lambda m=msg: (
                 self.export_pb.configure(value=100),
@@ -3655,6 +3664,53 @@ class CSVImporterApp(tk.Tk):
         self.export_log.insert(tk.END, text)
         self.export_log.see(tk.END)
         self.export_log.configure(state=tk.DISABLED)
+
+    # ── Info Tab ──────────────────────────────────────────────────────────────
+
+    def _build_info_tab(self):
+        f = ttk.Frame(self.nb)
+        self.nb.add(f, text=_("tab.info"))
+
+        # ── 语言设置 ──────────────────────────────────────────────────────────
+        lang_lf = ttk.LabelFrame(f, text=_("info.lang.label"))
+        lang_lf.pack(fill=tk.X, padx=20, pady=(20, 8))
+
+        lang_row = ttk.Frame(lang_lf)
+        lang_row.pack(fill=tk.X, padx=12, pady=10)
+
+        self._lang_var = tk.StringVar(value=current_lang())
+        for lang_code in available_langs():
+            label = LANG_LABELS.get(lang_code, lang_code)
+            ttk.Radiobutton(
+                lang_row, text=label,
+                variable=self._lang_var, value=lang_code,
+                command=self._on_lang_change,
+            ).pack(side=tk.LEFT, padx=10)
+
+        self._lang_hint_var = tk.StringVar(value="")
+        ttk.Label(lang_lf, textvariable=self._lang_hint_var,
+                  foreground="gray").pack(anchor=tk.W, padx=12, pady=(0, 8))
+
+        # ── 关于 ──────────────────────────────────────────────────────────────
+        about_lf = ttk.LabelFrame(f, text=_("info.tab.title"))
+        about_lf.pack(fill=tk.X, padx=20, pady=8)
+
+        info_lines = [
+            _("info.app.name"),
+            _("info.app.desc"),
+            _("info.app.support"),
+            "",
+            _("info.app.license"),
+        ]
+        for line in info_lines:
+            ttk.Label(about_lf, text=line).pack(anchor=tk.W, padx=16, pady=2)
+        ttk.Frame(about_lf).pack(pady=4)  # bottom padding
+
+    def _on_lang_change(self):
+        lang = self._lang_var.get()
+        set_lang(lang)
+        _save_ui_state({"lang": lang})
+        self._lang_hint_var.set(_("info.lang.restart_hint"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

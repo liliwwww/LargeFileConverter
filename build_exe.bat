@@ -1,69 +1,143 @@
 @echo off
 chcp 65001 >nul
-echo ==============================
-echo  打包 CSV 导入工具为 EXE
-echo ==============================
+setlocal EnableDelayedExpansion
 
-:: 激活 conda 环境
-call conda activate venv
+echo.
+echo ================================================
+echo   DB Importer - Build EXE
+echo ================================================
+echo.
+
+:: Check Python
+python --version >nul 2>&1
 if errorlevel 1 (
-    echo 激活 conda 环境失败，使用当前 Python 继续...
+    echo [ERROR] Python not found. Please install Python 3.9+ and add to PATH.
+    pause
+    exit /b 1
+)
+for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo [OK] %%v detected
+
+:: Activate virtualenv if present
+if exist ".venv\Scripts\activate.bat" (
+    echo [OK] Activating .venv
+    call .venv\Scripts\activate.bat
+) else if defined CONDA_DEFAULT_ENV (
+    echo [OK] conda env: %CONDA_DEFAULT_ENV%
+) else (
+    echo [  ] No virtualenv detected, using system Python
 )
 
-:: 安装依赖
+:: ---- Step 1: Install dependencies ------------------------------------------
 echo.
-echo [1/3] 安装 PyInstaller 及必要依赖...
-:: 锁定 oracledb 1.x（兼容 instantclient 12.2；2.x 需要 19c+）
-pip install pyinstaller "oracledb<2.0" cryptography -i https://pypi.tuna.tsinghua.edu.cn/simple
+echo [1/4] Installing dependencies (Tsinghua mirror)...
+echo.
+
+pip install pyinstaller chardet -i https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 (
-    echo 安装失败
+    echo [ERROR] Failed to install base dependencies.
     pause
     exit /b 1
 )
 
-:: 确认实际安装的 oracledb 版本
-echo 当前 oracledb 版本:
-pip show oracledb | findstr Version
+pip install xlsxwriter openpyxl -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 ( echo [WARN] xlsxwriter/openpyxl install failed. Excel export unavailable. )
 
-:: 清理上次构建
+pip install mysql-connector-python -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 ( echo [WARN] mysql-connector-python install failed. MySQL unavailable. )
+
+:: oracledb 1.x is compatible with Instant Client 12.2
+:: oracledb 2.x requires Oracle 19c+
+pip install "oracledb<2.0" cryptography -i https://pypi.tuna.tsinghua.edu.cn/simple
+if errorlevel 1 ( echo [WARN] oracledb install failed. Oracle unavailable. )
+
+echo.
+echo [  ] Installed versions:
+for %%p in (pyinstaller xlsxwriter openpyxl oracledb chardet) do (
+    pip show %%p 2>nul | findstr "^Version" | (set /p ver=) & echo   %%p: !ver!
+)
+
+:: ---- Step 2: Clean previous build ------------------------------------------
+echo.
+echo [2/4] Cleaning previous build...
 if exist build rmdir /s /q build
 if exist dist  rmdir /s /q dist
+echo [  ] Done
 
-:: 打包
+:: ---- Step 3: PyInstaller ----------------------------------------------------
 echo.
-echo [2/3] 开始打包（单文件、无控制台窗口）...
-pyinstaller --onefile --windowed --name "CSV导入工具" ^
-    --hidden-import cryptography ^
-    --hidden-import cryptography.hazmat.primitives.ciphers.algorithms ^
-    --hidden-import cryptography.hazmat.primitives.ciphers.modes ^
-    --hidden-import cryptography.hazmat.backends.openssl ^
-    --collect-all cryptography ^
-    csv_importer.py
+echo [3/4] Building EXE (single file, no console window)...
+echo       Includes: main app + locales + all dependencies
+echo.
+
+pyinstaller db_importer.spec
 if errorlevel 1 (
-    echo 打包失败，请查看上方错误信息
+    echo.
+    echo [ERROR] PyInstaller failed. See above for details.
     pause
     exit /b 1
 )
 
-:: 把 instantclient 复制到 dist\ 旁边（exe 运行时自动检测同目录）
+if not exist "dist\DB_Importer.exe" (
+    echo [ERROR] dist\DB_Importer.exe not found after build.
+    pause
+    exit /b 1
+)
+echo [OK] dist\DB_Importer.exe built successfully.
+
+:: ---- Step 4: Assemble release package --------------------------------------
 echo.
-echo [3/3] 复制 Oracle Instant Client 到 dist\...
+echo [4/4] Assembling release package...
+
+set RELEASE_DIR=dist\DB_Importer_release
+mkdir "%RELEASE_DIR%" 2>nul
+
+copy /y "dist\DB_Importer.exe" "%RELEASE_DIR%\" >nul
+echo [+] DB_Importer.exe
+
+set HAS_OCI=0
 for /d %%i in (instantclient*) do (
-    echo 复制 %%i 到 dist\%%i
-    xcopy /e /i /q "%%i" "dist\%%i"
+    echo [+] Copying Oracle Instant Client: %%i
+    xcopy /e /i /q "%%i" "%RELEASE_DIR%\%%i" >nul
+    set HAS_OCI=1
+)
+if "!HAS_OCI!"=="0" (
+    echo [  ] No instantclient* folder found. Oracle Thick mode requires it at runtime.
 )
 
+:: Create ZIP using PowerShell
+for /f "tokens=1-3 delims=/-" %%a in ("%date%") do (
+    set DATESTAMP=%%a%%b%%c
+)
+set ZIP_PATH=dist\DB_Importer_!DATESTAMP!.zip
+
+powershell -NoProfile -Command "Compress-Archive -Path '%RELEASE_DIR%\*' -DestinationPath '!ZIP_PATH!' -Force"
+if exist "!ZIP_PATH!" (
+    echo [+] ZIP created: !ZIP_PATH!
+) else (
+    echo [  ] ZIP creation failed. Manually zip: %RELEASE_DIR%\
+)
+
+:: ---- Summary ----------------------------------------------------------------
 echo.
-echo 打包完成！
+echo ================================================
+echo   Build complete!
 echo.
-echo 输出目录: %cd%\dist\
+echo   Release folder : %RELEASE_DIR%\
+echo   Release ZIP    : !ZIP_PATH!
 echo.
-echo ══ dist\ 目录结构 ════════════════════════════
-echo   CSV导入工具.exe       主程序
-echo   instantclient_12_2\   Oracle Thick 模式客户端
-echo ═════════════════════════════════════════════
+echo   Contents:
+echo     DB_Importer.exe   main app (multilingual, no Python needed)
+if "!HAS_OCI!"=="1" (
+echo     instantclient\    Oracle Thick mode client
+)
 echo.
-echo 分发时请将整个 dist\ 文件夹一起打包给用户。
+echo   SQLite works out of the box.
+echo   MySQL/Oracle require a running database server.
 echo.
-explorer dist
+echo   Share the ZIP with end users.
+echo   They just unzip and double-click DB_Importer.exe
+echo ================================================
+echo.
+
+explorer "%RELEASE_DIR%"
 pause
