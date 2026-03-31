@@ -272,6 +272,10 @@ class DBConnection:
             path = self.cfg.get("path", "")
             if not path:
                 raise ValueError("SQLite 数据库文件路径不能为空")
+            # 相对路径 → 相对于程序所在目录（双击 EXE 时工作目录不确定）
+            if not os.path.isabs(path):
+                path = os.path.join(APP_DIR, path)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             self.conn = sqlite3.connect(path)
         elif t == "mysql":
             if not HAS_MYSQL:

@@ -1,0 +1,7 @@
+{
+  "default": {
+    "type": "sqlite",
+    "name": "default",
+    "path": "data/default.db"
+  }
+}

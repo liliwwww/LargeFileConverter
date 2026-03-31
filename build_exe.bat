@@ -89,11 +89,24 @@ echo.
 echo [4/4] Assembling release package...
 
 set RELEASE_DIR=dist\DB_Importer_release
-mkdir "%RELEASE_DIR%" 2>nul
+if exist "%RELEASE_DIR%" rmdir /s /q "%RELEASE_DIR%"
+mkdir "%RELEASE_DIR%"
+mkdir "%RELEASE_DIR%\data"
+mkdir "%RELEASE_DIR%\logs"
 
+:: Main EXE
 copy /y "dist\DB_Importer.exe" "%RELEASE_DIR%\" >nul
 echo [+] DB_Importer.exe
 
+:: Default configs (db_config.json, ui_state.json, data/default.db)
+:: These go next to the EXE so the app finds them on first launch
+xcopy /e /i /q "release_defaults\*" "%RELEASE_DIR%\" >nul
+echo [+] db_config.json  (default SQLite connection -> data/default.db)
+echo [+] ui_state.json   (default language: zh_CN)
+echo [+] data\default.db (empty SQLite database, ready to use)
+echo [+] logs\           (empty, will hold import/export logs)
+
+:: Oracle Instant Client (optional)
 set HAS_OCI=0
 for /d %%i in (instantclient*) do (
     echo [+] Copying Oracle Instant Client: %%i
@@ -127,15 +140,18 @@ echo   Release ZIP    : !ZIP_PATH!
 echo.
 echo   Contents:
 echo     DB_Importer.exe   main app (multilingual, no Python needed)
+echo     db_config.json    pre-configured with default SQLite connection
+echo     ui_state.json     default language: zh_CN
+echo     data\default.db   empty SQLite database (ready to use)
+echo     logs\             log output directory
 if "!HAS_OCI!"=="1" (
 echo     instantclient\    Oracle Thick mode client
 )
 echo.
-echo   SQLite works out of the box.
-echo   MySQL/Oracle require a running database server.
+echo   SQLite: works out of the box, no server needed.
+echo   MySQL / Oracle: requires a running database server.
 echo.
-echo   Share the ZIP with end users.
-echo   They just unzip and double-click DB_Importer.exe
+echo   Share the ZIP. Users unzip and double-click DB_Importer.exe.
 echo ================================================
 echo.
 

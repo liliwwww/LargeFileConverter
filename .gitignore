@@ -42,6 +42,10 @@ instantclient*/
 # Keep requirements.txt
 !requirements.txt
 
+# release_defaults/ must be committed (default configs for end users)
+!release_defaults/
+!release_defaults/**
+
 # IDE & tools
 .vscode/
 .idea/
